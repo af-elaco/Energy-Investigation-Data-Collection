@@ -199,6 +199,15 @@ p { margin: 0 0 .75rem; }
 .svg-btn:focus { outline: none; }
 .magnifier { position: absolute; right: 10px; top: 10px; width: clamp(120px, 25%, 210px); aspect-ratio: 1 / 1; border-radius: 50%; border: 0; background: transparent; overflow: hidden; box-shadow: 0 4px 12px rgba(16,24,40,.28), 0 0 0 3px #2F363E; }
 .mag-svg { display: block; width: 100%; height: 100%; }
+.mag-col { position: absolute; right: 10px; top: 10px; width: clamp(120px, 25%, 210px); display: flex; flex-direction: column; align-items: stretch; gap: 10px; pointer-events: none; }
+.mag-col .magnifier { position: relative; right: auto; top: auto; width: 100%; }
+.adjust-box { pointer-events: auto; padding: 6px 8px 8px; background: rgba(255,255,255,.95); border: 1px solid #D0D5DD; border-radius: 8px; box-shadow: 0 2px 8px rgba(16,24,40,.12); text-align: center; }
+.adjust-box[hidden] { display: none; }
+.adj-t { font-size: .8125rem; font-weight: 600; color: #344054; margin-bottom: 5px; }
+.adj-row { display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; }
+.adj-row .btn { flex: 1 1 0; min-width: 0; padding: 4px 8px; }
+.trolley.can-drag { cursor: grab; }
+.trolley.dragging { cursor: grabbing; }
 .sim-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 10px 0 4px; }
 .sim-sel { font-weight: 600; }
 .sim-controls select { min-height: 36px; border: 1px solid #98A2B3; border-radius: 6px; padding: 4px 8px; background: #FFFFFF; }
@@ -347,13 +356,23 @@ td.small { font-size: 12px; max-width: 260px; overflow-wrap: anywhere; white-spa
 .tb-student { font-weight: 700; font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .simpane { flex: 1; overflow: auto; padding: 12px 20px 24px; background: var(--bg); }
 .simpane .sim { max-width: min(1260px, calc((100vh - 210px) * 2.16)); min-width: 640px; margin: 0 auto; }
-.simpane .magnifier { width: clamp(150px, 22%, 240px); }
+.simpane .mag-col { width: clamp(150px, 22%, 240px); }
 .simpane .sim-controls { justify-content: flex-start; }
 .anom-val { font-weight: 700; text-decoration: underline; }
 .flag-line { font-weight: 700; color: #B42318; padding: 6px 10px; border-left: 4px solid #B42318; background: #FEF3F2; }
 @media print {
   #print-root .info-table th, #print-root .info-table td { font-size: 9pt; padding: 3px 5px; }
 }
+
+.btn .btn-ico { width: 16px; height: 16px; flex: none; }
+.scene-wrap { box-shadow: 0 1px 2px rgba(16,24,40,.06), 0 6px 18px rgba(16,24,40,.10); border-radius: 8px; overflow: hidden; }
+
+.gpe-box { position: absolute; left: 10px; top: 10px; padding: 8px 12px 7px; background: rgba(255,255,255,.94); border: 1px solid #D0D5DD; border-radius: 8px; box-shadow: 0 2px 8px rgba(16,24,40,.12); color: var(--text); line-height: 1.25; pointer-events: none; }
+.gpe-t { font-size: .8125rem; font-weight: 600; color: #344054; }
+.gpe-row { display: flex; align-items: baseline; gap: 6px; margin-top: 2px; }
+.gpe-k { font-size: 1rem; font-weight: 600; }
+.gpe-v { font-size: 1.35rem; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 4.6em; }
+.gpe-s { font-size: .75rem; color: #475467; margin-top: 2px; }
 
 </style>
 </head>
@@ -395,12 +414,13 @@ td.small { font-size: 12px; max-width: 260px; overflow-wrap: anywhere; white-spa
    go to Settings > Make a hash, and paste the result here.
    ===================================================================== */
 const CONFIG = {
-  appVersion: '2.1.0',
+  appVersion: '2.5.0',
   schoolName: 'NLCS Singapore',
   classList: ['8A', '8B', '8C', '8D', '8E', '8F'],
   teacherPinHash: '1a8c1a709442ce',   // hash of the teacher PIN (default 2468)
   seedSalt: 'G8U2-2026-trolley',      // change for a new cohort so every student gets new data
-  maxRunsPerPoint: 6                  // runs allowed at each release point A to H
+  maxRunsPerPoint: 15,                // runs allowed at each release point A to H
+  timerSpeedMode: true                // true: the timer has a Mode button (TIME in s, SPEED in m/s); false: time only
 };
 
 /* =====================================================================
@@ -560,39 +580,53 @@ function linFit(xs, ys) {
 
    Because F acts over a distance d that is proportional to h, v^2 stays
    directly proportional to h. The measured gradient of v^2 against h is
-   20k (m/s^2) instead of the predicted 2g = 20 m/s^2.
+   2gk = 19.6k (m/s^2) instead of the predicted 2g = 19.6 m/s^2
+   (g = 9.8 N/kg).
 
-   RUN-TO-RUN VARIATION (as in a real lab). Every value is seeded, so the
-   same student always gets the same data. Four small, independent effects:
+   VARIATION, AS IN A REAL LAB. Every value is seeded, so the same student
+   always gets the same data, and no two students get the same data.
 
-   1. Placing the trolley (each press of Move trolley, placement q): the
-      front wheel sits dd from the mark along the ramp, dd ~ Normal(0, 2 mm),
-      clipped to +/-5 mm. So h changes by up to about 1.5 mm, and the
-      magnifier shows the real height of that placement.
-   2. Letting go by hand (run n): a tiny push or drag changes v^2 by
-      r ~ Normal(0, 0.035 m^2/s^2), clipped to +/-0.09. This matters most
-      for the low release points, where v^2 is small.
-   3. Friction from run to run (run n): k changes by a fraction
-      c ~ Normal(0, 0.8%), clipped to +/-2% (dust, the axles, the line the
-      trolley takes down the ramp).
-   4. Card and beam (run n): the trolley wobbles a little and the card
-      cuts the beam slightly early or late, j ~ Normal(0, 0.3 ms), clipped
-      to +/-0.7 ms.
+   Run to run (each run n, or each placement q):
+   1. Placing the trolley: the front wheel sits dd from the mark along the
+      ramp, dd ~ Normal(0, 2 mm), clipped to +/-5 mm. So h changes by up to
+      about 1.5 mm, and the magnifier shows the real height.
+   2. Letting go by hand: a tiny push or drag changes v^2 by
+      r ~ Normal(0, 0.04 m^2/s^2), clipped to +/-0.10. This matters most for
+      the low release points, where v^2 is small.
+   3. Friction: k changes by a fraction c ~ Normal(0, 2.2%), clipped to +/-5.5%
+      (dust, the axles, the line the trolley takes down the ramp).
+   4. Card and beam: the trolley wobbles and the card cuts the beam slightly
+      early or late, j ~ Normal(0, 0.6 ms), clipped to +/-1.4 ms.
 
-       v_run^2 = 2 g h k (1 + c) + r,      t = L / v_run + j   (shown to 0.001 s)
+   Mark to mark (the same for every run from one mark):
+   5. Each mark has its own small, steady difference sp (bumps and uneven
+      patches on the board). For A, C, E, G and H the differences are chosen
+      so that, by least squares, they do not tilt the v^2 against h line or
+      move it away from the origin: they only scatter the points. Their size
+      is the same for every student (RMS 2.6% of v^2 at H, at most 10% of
+      v^2 at a mark), so every graph needs a line of best fit.
 
-   Result (checked over 200 students): at A the three readings are usually
-   all different; at C to H they are often the same to 0.001 s, often two
-   the same and one 0.001 s away, and sometimes all different.
-   Set PHYS.noise = 0 to switch all four effects off (used to check the
-   sample table).
+       v_run^2 = 2 g h k (1 + sp) (1 + c) + r,    t = L / v_run + j   (shown to 0.001 s)
 
-   Anomalous run: the student's Nth run overall uses v_run = v * f
-   (released below the mark, or a wheel rubbed), with no other variation.
+   Checked over 160 students (A, C, E, G, H, three runs each):
+   - points scatter 0.3 to 2.2 small squares (RMS, median 1.1) around each
+     student's own line of best fit (vertical scale 8 or 10 m^2/s^2);
+   - gradients 15.7 to 19.5 m/s^2 (always below the predicted 20);
+     intercepts within +/-0.31 m^2/s^2 of the origin;
+   - at A the three readings are all different 7 times in 10; at H all
+     three match about 1 time in 6, and all three differ about 1 time in 4;
+   - no two students have the same set of readings.
+   Set PHYS.noise = 0 to switch every effect off (sample table check).
+
+   Anomalous run: the student's Nth run overall uses v_run = v * f, where
+   v includes the mark's steady difference (released below the mark, or a
+   wheel rubbed). Its time is 9% to 19% longer than the mean of the other
+   runs at that mark, and at least twice their spread (checked over 160
+   students), so it does not fit the pattern.
    Light gate: t = L / v_run, L = 0.100 m, shown to 3 decimal places.
    ===================================================================== */
 const PHYS = {
-  g: 10,                // N/kg
+  g: 9.8,               // N/kg
   m: 0.500,             // kg
   L: 0.100,             // card length, m
   rampLen: 1.20,        // m
@@ -602,9 +636,11 @@ const PHYS = {
   gateDist: 0.12,       // light gate beam, m past the bottom of the ramp (trolley is level here)
   noise: 1,             // 1 = normal lab variation, 0 = none
   placeSD: 0.002, placeClip: 0.005,        // m along the ramp
-  releaseSD: 0.035, releaseClip: 0.09,     // m^2/s^2 added to v^2
-  frictionSD: 0.008, frictionClip: 0.02,   // fraction of k
-  gateSD: 0.0003, gateClip: 0.0007         // s added to the time
+  adjustMax: 0.025,                        // Raise, Lower and drag: the front wheel stays within 0.025 m (along the ramp) of the mark
+  releaseSD: 0.04, releaseClip: 0.10,      // m^2/s^2 added to v^2
+  frictionSD: 0.022, frictionClip: 0.055,  // fraction of k
+  gateSD: 0.0006, gateClip: 0.0014,        // s added to the time
+  pointSD: 0.026, pointClip: 0.10          // mark-to-mark scatter: change in v^2 as a fraction of v^2 at H (A, C, E, G, H)
 };
 
 /* Seed: cyrb53 hash of normalised first + last name + class + salt. */
@@ -637,6 +673,16 @@ function trueHeight(p, i) { return releaseDistance(i) * p.sinT; }     // h = d s
 function predictedSpeed(h) { return Math.sqrt(2 * PHYS.g * h); }      // mgh = 1/2 m v^2
 function modelSpeed(h, k) { return Math.sqrt(2 * PHYS.g * h * k); }   // v^2 = 2 g h k
 function timerReading(v) { return Math.round((PHYS.L / v) * 1000) / 1000; }
+/* SPEED mode of the light gate timer. The timer divides the card length by
+   the time it shows (0.001 s resolution), so the speed always agrees with a
+   student's own v = 0.100 m / t. Shown to 3 significant figures:
+   0.926 m/s, 1.31 m/s, 2.63 m/s. Before a measurement it shows 0.00. */
+function speedReading(tStr) {
+  const t = Number(tStr);
+  if (!(t > 0)) return '0.00';
+  const v = PHYS.L / t;
+  return v < 0.9995 ? v.toFixed(3) : v.toFixed(2);
+}
 
 /* Seeded standard normal value for one effect of one run (Box-Muller).
    stream: 1 placement, 2 release, 3 friction, 4 light gate. */
@@ -649,6 +695,31 @@ function seededNormal(seed32, n, stream) {
 }
 function effect(seed32, n, stream, sd, clip) { return PHYS.noise * clamp(sd * seededNormal(seed32, n, stream), -clip, clip); }
 
+/* Each release mark has its own steady difference (bumps and uneven patches
+   on the board, the slightly different line the trolley takes from that
+   mark). It changes v^2 by the same fraction for every run from mark i, so
+   the plotted means scatter around the line instead of sitting on it. */
+const METHOD_POINTS = [0, 2, 4, 6, 7];   // A, C, E, G, H: the points the task sheet uses
+function pointFactors(p) {
+  if (p._pf && p._pfNoise === PHYS.noise) return p._pf;
+  const f = PHYS.points.map((_, i) => PHYS.pointSD * seededNormal(p.seed32, i + 1, 5));   // B, D, F: plain random
+  // A, C, E, G, H. Work with the change in v^2 at each mark (as a fraction of
+  // v^2 at H). Start from random values, a little smaller for the low marks,
+  // then remove any part that would tilt the line of v^2 against h or move it
+  // away from the origin (least squares), and scale to the same size for every
+  // student. So the points always scatter, but the gradient does not change.
+  const xs = METHOD_POINTS.map(i => i + 1), xH = 8;
+  let dev = METHOD_POINTS.map((i, j) => seededNormal(p.seed32, i + 1, 5) * Math.pow(xs[j] / xH, 0.6));
+  const ortho = [];
+  [xs.map(() => 1), xs.slice()].forEach(v => { let w = v.slice(); ortho.forEach(o => { const d = w.reduce((a, x, j) => a + x * o[j], 0); w = w.map((x, j) => x - d * o[j]); }); const nrm = Math.sqrt(w.reduce((a, x) => a + x * x, 0)); ortho.push(w.map(x => x / nrm)); });
+  ortho.forEach(o => { const d = dev.reduce((a, x, j) => a + x * o[j], 0); dev = dev.map((x, j) => x - d * o[j]); });
+  const rms = Math.sqrt(dev.reduce((a, x) => a + x * x, 0) / dev.length) || 1;
+  METHOD_POINTS.forEach((i, j) => { f[i] = PHYS.pointSD * (dev[j] / rms) * xH / xs[j]; });   // back to a fraction of v^2 at that mark
+  p._pf = f.map(x => PHYS.noise * clamp(x, -PHYS.pointClip, PHYS.pointClip)); p._pfNoise = PHYS.noise;
+  return p._pf;
+}
+function pointFactor(p, i) { return pointFactors(p)[i]; }
+
 /* Where the front wheel ends up for placement q (m along the ramp; + is higher up). */
 function placeOffset(seed32, q) { return effect(seed32, q, 1, PHYS.placeSD, PHYS.placeClip); }
 
@@ -659,18 +730,19 @@ function makeRun(p, i, n, dd) {
   const d = releaseDistance(i) + dd;
   const hgt = d * p.sinT;
   const vModel = modelSpeed(hgt, p.k);
+  const sp = pointFactor(p, i);                          // steady difference for this mark
   let vr, t, rel = 0, fr = 0, jit = 0, anomaly = false;
   if (n === p.N) {                                       // anomalous run
-    anomaly = true; vr = vModel * p.f; t = timerReading(vr);
+    anomaly = true; vr = vModel * Math.sqrt(1 + sp) * p.f; t = timerReading(vr);
   } else {
     rel = effect(p.seed32, n, 2, PHYS.releaseSD, PHYS.releaseClip);
     fr = effect(p.seed32, n, 3, PHYS.frictionSD, PHYS.frictionClip);
     jit = effect(p.seed32, n, 4, PHYS.gateSD, PHYS.gateClip);
-    vr = Math.sqrt(Math.max(0.01, 2 * PHYS.g * hgt * p.k * (1 + fr) + rel));
+    vr = Math.sqrt(Math.max(0.01, 2 * PHYS.g * hgt * p.k * (1 + sp) * (1 + fr) + rel));
     t = Math.round((PHYS.L / vr + jit) * 1000) / 1000;
   }
   const eps = anomaly ? null : vr / vModel - 1;          // speed change from all effects (for the run log)
-  return { n, idx: i, point: PHYS.points[i], d, dd, h: hgt, eps, rel, fr, jit, anomaly, v: vr, t };
+  return { n, idx: i, point: PHYS.points[i], d, dd, h: hgt, sp, eps, rel, fr, jit, anomaly, v: vr, t };
 }
 
 /* Trolley geometry, measured from the front wheel's contact point (m). */
@@ -729,7 +801,7 @@ function expectedValues(p) {
       gpe: PHYS.m * PHYS.g * hgt, dissipated: PHYS.m * PHYS.g * hgt * (1 - p.k)
     };
   });
-  return { rows, gradient: 20 * p.k };
+  return { rows, gradient: 2 * PHYS.g * p.k };
 }
 
 /* =====================================================================
@@ -742,10 +814,7 @@ const START_TEXT = {
   subtitle: 'Grade 8 Physics. Criterion C: Processing and evaluating. Data collection',
   instructions: [
     'Use this simulation to collect your data. Answer every question on your task sheet.',
-    'Type your real first name, last name and class. Your data are unique to you.',
-    'Record every reading on your task sheet as you go. The simulation does not keep a results table for you.',
-    'Use the same laptop and browser for both lessons.',
-    'At the end of Lesson 1, use Tools > Save run record and upload the file to ManageBac.'
+    'Record every reading on your task sheet as you go. The simulation does not keep a results table for you.'
   ]
 };
 const MAX_RUNS = 'Maximum runs at this point reached.';
@@ -758,7 +827,7 @@ const FORMULAS = [
   ['Work done', 'W = Fd'],
   ['Efficiency', 'efficiency = useful energy output ÷ total energy input × 100%']
 ];
-const FORMULA_NOTE = 'g = 10 N/kg. 1 m = 100 cm.';
+const FORMULA_NOTE = 'g = ' + PHYS.g + ' N/kg. 1 m = 100 cm.';
 
 const SCIENCE_WORDS = [
   ['Anomalous result', 'A result that does not fit the pattern of the other results'],
@@ -795,8 +864,13 @@ const HOW_TO_USE = [
   ['Collecting one run', [
     'Choose a release point, then press Move trolley.',
     'Read the vertical height h of the release point from the metre rule in the magnifier. Read it to the nearest 0.1 cm, the {resolution|Resolution} of the rule.',
+    'To put the edge of the set square exactly on a millimetre mark, press Raise or Lower under the magnifier, or drag the trolley along the ramp. Each press moves the trolley to the next millimetre mark. The trolley stays within 2.5 cm of the release point, measured along the ramp.',
     'Press Reset on the timer. The green READY light comes on. Then press Release. The timer only measures when the READY light is on.',
     'When the trolley stops, read the time on the timer and record it on your task sheet. These readings are your {raw data|Raw data}.',
+    ...(CONFIG.timerSpeedMode !== false ? [
+      'Mode on the timer changes the reading. When TIME is lit, the timer shows the time t for the card to pass through the light gate, in s. When SPEED is lit, it shows the speed v of the trolley at the light gate, in m/s.',
+      'The timer works out the speed from the same run: v = card length ÷ time = 0.100 m ÷ t. Record the time t, then use SPEED to check your values of v.'
+    ] : []),
     'Repeat until you have three runs at each release point. Look out for an {anomalous result|Anomalous result}.'
   ]],
   ['Other controls', [
@@ -804,7 +878,8 @@ const HOW_TO_USE = [
     'Replay shows the last run again. A replay is not a new run.',
     'Slow motion plays the motion at quarter speed. It does not change the timer reading.',
     'Sound turns the sound of the trolley on or off.',
-    'You can do up to 6 runs at each release point. The counter shows how many runs you have done at the point you chose.'
+    'The panel at the top left shows the gravitational potential energy (GPE) of the trolley, GPE = mgh, for its height h above the bench. It uses m = 0.500 kg and g = ' + PHYS.g + ' N/kg.',
+    'You can do up to ' + CONFIG.maxRunsPerPoint + ' runs at each release point. The counter shows how many runs you have done at the point you chose.'
   ]],
   ['Tools', [
     'Tools has the calculator, the formula sheet, the key words and display settings.',
@@ -843,7 +918,7 @@ function newState(first, last, cls) {
     student: { first: tidyName(first), last: tidyName(last), cls },
     seedCode: sd.code, created: nowIso(), logins: [nowIso()],
     runLog: [],
-    sim: { selected: 0, positioned: false, uFront: PHYS.cushionDist - TROLLEY.nose - 0.012, ruleIdx: 3, display: '0.000', lastRun: null, ready: true, placements: 0, place: null, sound: false },
+    sim: { selected: 0, positioned: false, uFront: PHYS.cushionDist - TROLLEY.nose - 0.012, ruleIdx: 3, display: '0.000', lastRun: null, ready: true, placements: 0, place: null, sound: false, mode: 'time' },
     display: { scale: 0, font: 'standard', bg: 'white' }
   };
 }
@@ -1285,6 +1360,160 @@ function showSaveBanner(on) {
 }
 
 /* =====================================================================
+   TEXTURES: drawn once at start-up on hidden canvases, then used as
+   images inside the SVG scene. Nothing is downloaded, so the page still
+   works offline. Decoration only: none of this affects the data.
+   ===================================================================== */
+const Tex = {
+  cache: {},
+  /* Smooth value noise (seeded) and fractal noise built from it. */
+  noise(seed) {
+    const P = new Uint8Array(512), r = mulberry32(seed), perm = [];
+    for (let i = 0; i < 256; i++) perm[i] = i;
+    for (let i = 255; i > 0; i--) { const j = Math.floor(r() * (i + 1)); const t = perm[i]; perm[i] = perm[j]; perm[j] = t; }
+    for (let i = 0; i < 512; i++) P[i] = perm[i & 255];
+    const V = new Float32Array(256); for (let i = 0; i < 256; i++) V[i] = r();
+    const fade = t => t * t * (3 - 2 * t);
+    const n2 = (x, y) => {
+      const xi = Math.floor(x), yi = Math.floor(y), xf = x - xi, yf = y - yi;
+      const a = V[P[(P[xi & 255] + yi) & 511] & 255], b = V[P[(P[(xi + 1) & 255] + yi) & 511] & 255];
+      const c = V[P[(P[xi & 255] + yi + 1) & 511] & 255], d = V[P[(P[(xi + 1) & 255] + yi + 1) & 511] & 255];
+      const u = fade(xf), v = fade(yf);
+      return (a * (1 - u) + b * u) * (1 - v) + (c * (1 - u) + d * u) * v;
+    };
+    n2.fbm = (x, y, oct) => { let s = 0, amp = 0.5, f = 1, norm = 0; for (let o = 0; o < (oct || 4); o++) { s += amp * n2(x * f, y * f); norm += amp; amp *= 0.5; f *= 2.03; } return s / norm; };
+    return n2;
+  },
+  canvas(w, h) { const c = document.createElement('canvas'); c.width = w; c.height = h; return c; },
+  url(c) { try { return c.toDataURL('image/png'); } catch (e) { return ''; } },
+  mix(a, b, t) { return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t]; },
+  paint(w, h, fn) {
+    const c = this.canvas(w, h), ctx = c.getContext('2d');
+    if (!ctx) return '';
+    const img = ctx.createImageData(w, h), d = img.data;
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const col = fn(x, y), k = (y * w + x) * 4;
+      d[k] = col[0]; d[k + 1] = col[1]; d[k + 2] = col[2]; d[k + 3] = col[3] === undefined ? 255 : col[3];
+    }
+    ctx.putImageData(img, 0, 0);
+    return this.url(c);
+  },
+  get(name) { if (!(name in this.cache)) { try { this.cache[name] = this['make_' + name](); } catch (e) { this.cache[name] = ''; } } return this.cache[name]; },
+
+  /* Plywood board seen edge-on: five plies, long grain in the face plies,
+     darker end grain in the cross plies, a lighter worn running surface. */
+  make_ply() {
+    const n = this.noise(11), W = 1400, H = 44;
+    const light = [226, 196, 146], dark = [184, 140, 86], cross = [170, 128, 78];
+    const plies = [0, 0.16, 0.36, 0.64, 0.84, 1];
+    return this.paint(W, H, (x, y) => {
+      const v = y / H; let p = 0; while (p < 4 && v > plies[p + 1]) p++;
+      let col;
+      if (p % 2 === 0) {      // face plies: long streaky grain
+        const g = n.fbm(x * 0.006, y * 0.55 + p * 7, 4), fib = n(x * 0.08, y * 1.7 + p * 3);
+        const streak = Math.pow(Math.abs(Math.sin((g * 9 + y * 0.18) * Math.PI)), 6);
+        col = this.mix(light, dark, 0.25 + 0.5 * streak + 0.18 * (fib - 0.5));
+      } else {                // cross plies: end grain
+        const g = n.fbm(x * 0.09, y * 0.9 + p * 5, 3), dot = n(x * 0.6, y * 0.6 + p) > 0.82 ? 0.25 : 0;
+        col = this.mix(this.mix(light, cross, 0.55), dark, 0.25 + 0.35 * g + dot);
+      }
+      const edge = Math.min(Math.abs(v - plies[p]), Math.abs(plies[p + 1] - v)) * H;   // glue lines
+      if (edge < 0.7 && p > 0) col = this.mix(col, [120, 86, 46], 0.55);
+      if (y < 2) col = this.mix(col, [242, 222, 184], 0.6);                            // worn top edge
+      const shade = 1.04 - 0.16 * v;                                                     // lit from above
+      return [col[0] * shade, col[1] * shade, col[2] * shade];
+    });
+  },
+  /* Beech metre rule: fine vertical grain with a satin varnish. */
+  make_beech() {
+    const n = this.noise(23), W = 48, H = 1500;
+    const a = [240, 212, 158], b = [214, 176, 112];
+    return this.paint(W, H, (x, y) => {
+      const g = n.fbm(x * 0.35 + 3, y * 0.004, 4), f = n(x * 1.1, y * 0.05);
+      const s = Math.pow(Math.abs(Math.sin((g * 7 + x * 0.12) * Math.PI)), 5);
+      const col = this.mix(a, b, 0.2 + 0.55 * s + 0.12 * (f - 0.5));
+      const sheen = 1 + 0.08 * Math.exp(-Math.pow((x - 14) / 7, 2));
+      return [Math.min(255, col[0] * sheen), Math.min(255, col[1] * sheen), Math.min(255, col[2] * sheen)];
+    });
+  },
+  /* Dark epoxy-resin worktop: mottled with fine speckle and a soft sheen. */
+  make_resin() {
+    const n = this.noise(37), W = 1400, H = 30;
+    return this.paint(W, H, (x, y) => {
+      const m = n.fbm(x * 0.01, y * 0.2, 4), sp = n(x * 0.9, y * 0.9);
+      let v = 78 + 26 * (m - 0.5) + (sp > 0.86 ? 26 : sp < 0.1 ? -14 : 0);
+      v *= 0.86 + 0.22 * (y / H);                                   // nearer edge is lighter
+      v += 18 * Math.exp(-Math.pow((y - H * 0.35) / 4, 2));          // sheen from the ceiling lights
+      return [v * 0.95, v * 0.98, v * 1.04];
+    });
+  },
+  /* Polyurethane foam: yellow with open pores. */
+  make_foam() {
+    const n = this.noise(41), W = 60, H = 96;
+    return this.paint(W, H, (x, y) => {
+      const p = n(x * 0.55, y * 0.55), q = n.fbm(x * 0.12, y * 0.12, 3);
+      const base = this.mix([252, 226, 120], [228, 178, 46], 0.3 + 0.5 * q + (x / W) * 0.2);
+      const pore = p < 0.22 ? 0.55 : p < 0.3 ? 0.25 : 0;
+      return this.mix(base, [150, 104, 14], pore);
+    });
+  },
+  /* Cast-iron stand base: blue-grey hammer finish. */
+  make_iron() {
+    const n = this.noise(53), W = 240, H = 24;
+    return this.paint(W, H, (x, y) => {
+      const m = n.fbm(x * 0.12, y * 0.25, 3), d = n(x * 0.5, y * 0.8);
+      let v = 0.75 + 0.35 * (m - 0.5) + (d > 0.8 ? 0.12 : 0);
+      v *= 1.15 - 0.45 * (y / H);
+      return [58 * v, 72 * v, 92 * v];
+    });
+  },
+  /* The lab behind the bench, softly out of focus like a photograph:
+     painted wall, window light, a shelf with bottles and glassware. */
+  make_backdrop() {
+    const W = 600, H = 252, c = this.canvas(W, H), ctx = c.getContext('2d');
+    if (!ctx) return '';
+    const g = ctx.createLinearGradient(0, 0, 0, H); g.addColorStop(0, '#EEF1F5'); g.addColorStop(1, '#DDE2E9'); ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+    const lg = ctx.createRadialGradient(W * 0.18, -20, 10, W * 0.18, -20, W * 0.7); lg.addColorStop(0, 'rgba(255,250,236,0.9)'); lg.addColorStop(1, 'rgba(255,250,236,0)'); ctx.fillStyle = lg; ctx.fillRect(0, 0, W, H);
+    // window frame at the far left
+    ctx.fillStyle = 'rgba(206,222,238,0.85)'; ctx.fillRect(-10, 18, 92, 150);
+    ctx.fillStyle = 'rgba(244,248,252,0.9)'; ctx.fillRect(-6, 22, 40, 66); ctx.fillRect(40, 22, 38, 66); ctx.fillRect(-6, 96, 40, 68); ctx.fillRect(40, 96, 38, 68);
+    // shelf and its bracket shadows
+    const sy = 92;
+    ctx.fillStyle = 'rgba(160,128,90,0.75)'; ctx.fillRect(110, sy, 330, 6);
+    ctx.fillStyle = 'rgba(0,0,0,0.08)'; ctx.fillRect(110, sy + 6, 330, 5);
+    const bottle = (x, w, h, col, neck) => { ctx.fillStyle = col; ctx.fillRect(x, sy - h, w, h); ctx.fillRect(x + w * 0.3, sy - h - neck, w * 0.4, neck); ctx.fillStyle = 'rgba(30,30,30,0.6)'; ctx.fillRect(x + w * 0.25, sy - h - neck - 4, w * 0.5, 4); ctx.fillStyle = 'rgba(255,255,255,0.35)'; ctx.fillRect(x + 2, sy - h + 4, 2, h - 8); };
+    const flask = (x, w, h, col) => { ctx.fillStyle = col; ctx.beginPath(); ctx.moveTo(x + w * 0.4, sy - h); ctx.lineTo(x + w * 0.6, sy - h); ctx.lineTo(x + w * 0.6, sy - h * 0.6); ctx.lineTo(x + w, sy); ctx.lineTo(x, sy); ctx.lineTo(x + w * 0.4, sy - h * 0.6); ctx.closePath(); ctx.fill(); };
+    const beaker = (x, w, h, liq) => { ctx.fillStyle = 'rgba(210,228,240,0.8)'; ctx.fillRect(x, sy - h, w, h); ctx.fillStyle = liq; ctx.fillRect(x + 1, sy - h * 0.45, w - 2, h * 0.45); };
+    bottle(126, 18, 30, 'rgba(120,72,30,0.85)', 8); bottle(150, 16, 26, 'rgba(96,58,24,0.85)', 7); bottle(172, 20, 34, 'rgba(240,240,236,0.9)', 8);
+    flask(206, 30, 34, 'rgba(200,226,242,0.85)'); beaker(246, 22, 26, 'rgba(120,170,220,0.6)'); beaker(274, 18, 20, 'rgba(240,200,120,0.6)');
+    bottle(304, 18, 32, 'rgba(60,96,140,0.8)', 7); bottle(328, 16, 28, 'rgba(120,72,30,0.85)', 7);
+    ctx.fillStyle = 'rgba(90,96,104,0.55)'; ctx.fillRect(356, sy - 42, 56, 42);                      // a box file
+    ctx.fillStyle = 'rgba(180,70,60,0.5)'; ctx.fillRect(418, sy - 36, 14, 36);
+    // a pinboard on the right (far away, so faint)
+    ctx.fillStyle = 'rgba(196,168,128,0.5)'; ctx.fillRect(470, 30, 120, 90);
+    ctx.fillStyle = 'rgba(255,255,255,0.6)'; ctx.fillRect(480, 40, 30, 22); ctx.fillRect(518, 46, 26, 30); ctx.fillStyle = 'rgba(190,215,240,0.6)'; ctx.fillRect(552, 38, 28, 24);
+    // out of focus: a few passes of a box blur
+    try {
+      const img = ctx.getImageData(0, 0, W, H), d = img.data, tmp = new Float32Array(d.length);
+      const pass = (horiz, r) => {
+        for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+          let s0 = 0, s1 = 0, s2 = 0, s3 = 0, cnt = 0;
+          for (let k = -r; k <= r; k++) {
+            const xx = horiz ? Math.min(W - 1, Math.max(0, x + k)) : x, yy = horiz ? y : Math.min(H - 1, Math.max(0, y + k)), j = (yy * W + xx) * 4;
+            s0 += d[j]; s1 += d[j + 1]; s2 += d[j + 2]; s3 += d[j + 3]; cnt++;
+          }
+          const i = (y * W + x) * 4; tmp[i] = s0 / cnt; tmp[i + 1] = s1 / cnt; tmp[i + 2] = s2 / cnt; tmp[i + 3] = s3 / cnt;
+        }
+        for (let i = 0; i < d.length; i++) d[i] = tmp[i];
+      };
+      pass(true, 2); pass(false, 2); pass(true, 2); pass(false, 2);
+      ctx.putImageData(img, 0, 0);
+    } catch (e) { /* keep it sharp if pixels cannot be read */ }
+    return this.url(c);
+  }
+};
+
+/* =====================================================================
    SIMULATION: side view of a school lab bench with a ramp, a trolley,
    a metre rule, a light gate and a light gate timer.
    Scene units: 500 per metre. x = 0 at the bottom of the ramp, y = 0 at
@@ -1354,8 +1583,21 @@ function grad(id, stops, o) {
   stops.forEach(st => g.appendChild(s('stop', { offset: st[0], 'stop-color': st[1], 'stop-opacity': st[2] === undefined ? 1 : st[2] })));
   return g;
 }
+/* A pattern that holds one generated texture image (see 07_textures.js). */
+function texPattern(d, id, name, x, y, w, hgt) {
+  const url = Tex.get(name); if (!url) return false;
+  const pt = s('pattern', { id, patternUnits: 'userSpaceOnUse', x, y, width: w, height: hgt });
+  pt.appendChild(s('image', { href: url, x: 0, y: 0, width: w, height: hgt, preserveAspectRatio: 'none' }));
+  d.appendChild(pt); return true;
+}
 function sceneDefs() {
   const d = s('defs', {});
+  d.appendChild(grad('g8-vig', [[0, '#000', 0], [0.7, '#000', 0], [1, '#0B1220', 0.16]], { radial: true, r: '75%' }));
+  d.appendChild(grad('g8-gloss', [[0, '#FFFFFF', 0.55], [0.45, '#FFFFFF', 0.08], [1, '#FFFFFF', 0]]));
+  d.appendChild(grad('g8-cardgloss', [[0, '#FFFFFF', 0.16], [0.5, '#FFFFFF', 0.02], [1, '#FFFFFF', 0]], { x2: 1, y2: 1 }));
+  d.appendChild(grad('g8-glass', [[0, '#FFFFFF', 0.10], [0.45, '#FFFFFF', 0.02], [1, '#FFFFFF', 0]], { x2: 0.6, y2: 1 }));
+  d.appendChild(grad('g8-ao', [[0, '#000', 0.35], [1, '#000', 0]]));
+  d.appendChild(grad('g8-sidewall', [[0, '#2C2C2C'], [0.8, '#151515'], [0.92, '#3A3A3A'], [1, '#0A0A0A']], { radial: true }));
   d.appendChild(grad('g8-wall', [[0, '#F4F6F9'], [1, '#E2E7EE']]));
   d.appendChild(grad('g8-top', [[0, '#7A8089'], [1, '#575D65']]));
   d.appendChild(grad('g8-edge', [[0, '#3F454C'], [1, '#262A2F']]));
@@ -1391,8 +1633,28 @@ function sceneDefs() {
   const speck = s('pattern', { id: 'g8-speck', width: 9, height: 6, patternUnits: 'userSpaceOnUse' });
   [[1, 1, '#8E949C'], [5, 3, '#4E545B'], [7.5, 1.5, '#9AA0A8'], [3, 4.5, '#50565D']].forEach(p => speck.appendChild(s('rect', { x: p[0], y: p[1], width: 0.9, height: 0.9, fill: p[2], 'fill-opacity': 0.7 })));
   d.appendChild(speck);
+  const soft = s('filter', { id: 'g8-soft', x: '-50%', y: '-300%', width: '200%', height: '700%' }); soft.appendChild(s('feGaussianBlur', { stdDeviation: 1.1 })); d.appendChild(soft);
   const clip = s('clipPath', { id: 'g8-abovebench' }); clip.appendChild(s('rect', { x: -50, y: -50, width: SC.W + 100, height: SY(0) + 50 })); d.appendChild(clip);
   return d;
+}
+
+/* Small line icons for the control buttons (decorative: the text says what each button does). */
+function btnIcon(name) {
+  const P = {
+    move: 'M12.5 12.5 L4 4 M4 4 H10 M4 4 V10',
+    play: 'M5 3.2 L13 8 L5 12.8 Z',
+    pause: 'M5 3.5 V12.5 M11 3.5 V12.5',
+    replay: 'M3.2 8 A4.8 4.8 0 1 0 4.6 4.6 M2.6 2.4 V5.6 H5.8',
+    slow: 'M2.2 11.5 A5.8 5.8 0 0 1 13.8 11.5 M8 11.5 L5.2 7.4 M8 11.5 m -0.9 0 a 0.9 0.9 0 1 0 1.8 0 a 0.9 0.9 0 1 0 -1.8 0',
+    sound: 'M2.5 6 H5 L8.5 3 V13 L5 10 H2.5 Z M11 5.6 A3.4 3.4 0 0 1 11 10.4 M12.8 3.8 A6 6 0 0 1 12.8 12.2',
+    soundoff: 'M2.5 6 H5 L8.5 3 V13 L5 10 H2.5 Z M11 6 L14 10 M14 6 L11 10',
+    up: 'M3.5 10.5 L8 5.5 L12.5 10.5',
+    down: 'M3.5 5.5 L8 10.5 L12.5 5.5'
+  };
+  const svgEl = s('svg', { viewBox: '0 0 16 16', width: 16, height: 16, 'aria-hidden': 'true', focusable: 'false', class: 'btn-ico' });
+  svgEl.dataset.icon = name;
+  svgEl.appendChild(s('path', { d: P[name], fill: name === 'play' ? 'currentColor' : 'none', stroke: 'currentColor', 'stroke-width': 1.7, 'stroke-linecap': 'round', 'stroke-linejoin': 'round' }));
+  return svgEl;
 }
 
 const Sim = {
@@ -1418,6 +1680,7 @@ const Sim = {
     if (!sm.placements) sm.placements = 0;
     if (sm.positioned && !sm.place) sm.place = { q: 0, dd: 0, idx: sm.selected };
     if (sm.sound === undefined) sm.sound = false;
+    if (sm.mode !== 'speed' || CONFIG.timerSpeedMode === false) sm.mode = 'time';
   },
 
   build() {
@@ -1431,10 +1694,15 @@ const Sim = {
     svg.appendChild(sceneDefs());
 
     /* ---- wall and bench ---- */
+    const defs = svg.firstChild;
+    const back = Tex.get('backdrop');
     svg.appendChild(s('rect', { x: 0, y: 0, width: SC.W, height: SY(0), fill: 'url(#g8-wall)' }));
-    svg.appendChild(s('rect', { x: 0, y: 0, width: SC.W, height: SY(0), fill: 'url(#g8-tiles)', opacity: 0.75 }));
-    svg.appendChild(s('rect', { x: 0, y: SY(0) - 12, width: SC.W, height: 12, fill: 'url(#g8-top)' }));          // worktop seen from slightly above
-    svg.appendChild(s('rect', { x: 0, y: SY(0) - 12, width: SC.W, height: 12, fill: 'url(#g8-speck)' }));
+    if (back) svg.appendChild(s('image', { href: back, x: 0, y: 0, width: SC.W, height: SY(0) - 10, preserveAspectRatio: 'none' }));   // the lab behind, out of focus
+    else svg.appendChild(s('rect', { x: 0, y: 0, width: SC.W, height: SY(0), fill: 'url(#g8-tiles)', opacity: 0.75 }));
+    svg.appendChild(s('rect', { x: 0, y: SY(0) - 26, width: SC.W, height: 14, fill: 'url(#g8-ao)', transform: 'rotate(180 ' + SC.W / 2 + ' ' + (SY(0) - 19) + ')', opacity: 0.5 }));   // shadow where the wall meets the worktop
+    const resinOk = texPattern(defs, 'p8-resin', 'resin', 0, SY(0) - 12, SC.W, 12);
+    svg.appendChild(s('rect', { x: 0, y: SY(0) - 12, width: SC.W, height: 12, fill: resinOk ? 'url(#p8-resin)' : 'url(#g8-top)' }));          // worktop seen from slightly above
+    if (!resinOk) svg.appendChild(s('rect', { x: 0, y: SY(0) - 12, width: SC.W, height: 12, fill: 'url(#g8-speck)' }));
     svg.appendChild(s('line', { x1: 0, y1: SY(0) - 12, x2: SC.W, y2: SY(0) - 12, stroke: '#4A5058', 'stroke-width': 1 }));
     svg.appendChild(s('rect', { x: 0, y: SY(0), width: SC.W, height: 0.03 * K, fill: 'url(#g8-edge)' }));      // front edge of the worktop
     svg.appendChild(s('line', { x1: 0, y1: SY(0) + 0.5, x2: SC.W, y2: SY(0) + 0.5, stroke: '#9EA5AD', 'stroke-width': 1 }));
@@ -1446,7 +1714,10 @@ const Sim = {
     });
 
     /* ---- shadows on the worktop ---- */
-    const shadowAt = (x1, x2, op) => svg.appendChild(s('ellipse', { cx: (SX(x1) + SX(x2)) / 2, cy: SY(0) - 1.5, rx: (SX(x2) - SX(x1)) / 2 + 4, ry: 3.2, fill: '#000', opacity: op || 0.28, filter: 'url(#g8-blur)' }));
+    const shadowAt = (x1, x2, op) => {
+      svg.appendChild(s('ellipse', { cx: (SX(x1) + SX(x2)) / 2 + 3, cy: SY(0) - 2.5, rx: (SX(x2) - SX(x1)) / 2 + 8, ry: 4.2, fill: '#000', opacity: (op || 0.28) * 0.8, filter: 'url(#g8-blur)' }));
+      svg.appendChild(s('rect', { x: SX(x1), y: SY(0) - 1.6, width: SX(x2) - SX(x1), height: 1.8, fill: '#000', opacity: 0.35, filter: 'url(#g8-soft)' }));
+    };
     const topX = -BOARD_LEN * c, topY = BOARD_LEN * sn;
     const rodX = topX - 0.055;
     shadowAt(rodX - 0.04, rodX + 0.19, 0.32);
@@ -1456,9 +1727,11 @@ const Sim = {
 
     /* ---- clamp stand (behind the ramp) ---- */
     const st = s('g', {});
-    st.appendChild(s('rect', { x: SX(rodX - 0.04), y: SY(0.022), width: 0.23 * K, height: 0.022 * K, rx: 3, fill: 'url(#g8-base)', stroke: '#18202A', 'stroke-width': 0.8 }));
+    const ironOk = texPattern(defs, 'p8-iron', 'iron', SX(rodX - 0.04), SY(0.022), 0.23 * K, 0.022 * K);
+    st.appendChild(s('rect', { x: SX(rodX - 0.04), y: SY(0.022), width: 0.23 * K, height: 0.022 * K, rx: 3, fill: ironOk ? 'url(#p8-iron)' : 'url(#g8-base)', stroke: '#18202A', 'stroke-width': 0.8 }));
     st.appendChild(s('line', { x1: SX(rodX - 0.035), y1: SY(0.021) + 0.8, x2: SX(rodX + 0.185), y2: SY(0.021) + 0.8, stroke: '#7D8FA8', 'stroke-width': 1, opacity: 0.8 }));
     st.appendChild(s('rect', { x: SX(rodX) - 3.2, y: SY(0.70), width: 6.4, height: (0.70 - 0.02) * K, fill: 'url(#g8-chrome)' }));
+    st.appendChild(s('rect', { x: SX(rodX) - 1.4, y: SY(0.70) + 2, width: 0.9, height: (0.70 - 0.02) * K - 4, fill: '#FFFFFF', opacity: 0.75 }));   // specular line on the rod
     st.appendChild(s('ellipse', { cx: SX(rodX), cy: SY(0.70), rx: 3.2, ry: 1.2, fill: '#D5DAE0', stroke: '#7A828B', 'stroke-width': 0.5 }));
     // boss head at the height of the top of the board, with a thumb screw
     const by = topY + 0.012;
@@ -1475,12 +1748,10 @@ const Sim = {
     const board = s('g', { 'clip-path': 'url(#g8-abovebench)' });
     const bf = s('g', { transform: 'translate(' + SX(0) + ' ' + SY(0) + ') rotate(' + ang.toFixed(3) + ')' });
     const BL = BOARD_LEN * K, TK = BOARD_TK * K;
-    bf.appendChild(s('rect', { x: -BL, y: 0, width: BL + TK / sn, height: TK, fill: 'url(#g8-ply)', stroke: '#7A5A30', 'stroke-width': 0.8 }));
-    [0.3, 0.55, 0.8].forEach((f, j) => bf.appendChild(s('line', { x1: -BL, y1: TK * f, x2: TK / sn, y2: TK * f, stroke: j === 1 ? '#A57E47' : '#C59E64', 'stroke-width': 0.9, opacity: 0.75 })));
-    for (let j = 0; j < 14; j++) {            // short darker grain streaks in the face veneer
-      const x = -BL + deco() * BL, w = 20 + deco() * 60;
-      bf.appendChild(s('line', { x1: x, y1: TK * (0.08 + deco() * 0.15), x2: x + w, y2: TK * (0.08 + deco() * 0.15), stroke: '#B28650', 'stroke-width': 0.6, opacity: 0.6 }));
-    }
+    const plyOk = texPattern(defs, 'p8-ply', 'ply', -BL, 0, BL + TK / sn, TK);
+    bf.appendChild(s('rect', { x: -BL, y: 0, width: BL + TK / sn, height: TK, fill: plyOk ? 'url(#p8-ply)' : 'url(#g8-ply)', stroke: '#6E5029', 'stroke-width': 0.8 }));
+    if (!plyOk) [0.3, 0.55, 0.8].forEach((f, j) => bf.appendChild(s('line', { x1: -BL, y1: TK * f, x2: TK / sn, y2: TK * f, stroke: j === 1 ? '#A57E47' : '#C59E64', 'stroke-width': 0.9, opacity: 0.75 })));
+    bf.appendChild(s('rect', { x: -BL, y: TK, width: BL, height: 5, fill: 'url(#g8-ao)', opacity: 0.6 }));   // shade under the board
     bf.appendChild(s('line', { x1: -BL, y1: 0.4, x2: 0, y2: 0.4, stroke: '#F2DDB4', 'stroke-width': 1.2 }));   // worn running surface
     bf.appendChild(s('line', { x1: -BL, y1: 0, x2: 0, y2: 0, stroke: '#6B4D27', 'stroke-width': 0.8 }));
     // release marks: a marker line on the edge and a masking-tape label with the letter
@@ -1524,43 +1795,71 @@ const Sim = {
     [0.25, 0.55, 0.8].forEach(f => blk.appendChild(s('path', { d: 'M' + (SX(0.45) + 18 * f) + ' ' + (SY(0.11) + 2) + ' q 2 25 -1 52', stroke: '#7A5530', 'stroke-width': 0.6, fill: 'none', opacity: 0.6 })));
     svg.appendChild(blk);
     this.foam = s('g', {});
-    this.foam.appendChild(s('rect', { x: SX(0.40), y: SY(0.08), width: 0.05 * K, height: 0.08 * K, rx: 3, fill: 'url(#g8-foam)', stroke: '#C48F14', 'stroke-width': 0.7 }));
-    this.foam.appendChild(s('rect', { x: SX(0.40), y: SY(0.08), width: 0.05 * K, height: 0.08 * K, rx: 3, fill: 'url(#g8-pores)' }));
+    const foamOk = texPattern(defs, 'p8-foam', 'foam', SX(0.40), SY(0.08), 0.05 * K, 0.08 * K);
+    this.foam.appendChild(s('rect', { x: SX(0.40), y: SY(0.08), width: 0.05 * K, height: 0.08 * K, rx: 3, fill: foamOk ? 'url(#p8-foam)' : 'url(#g8-foam)', stroke: '#C48F14', 'stroke-width': 0.7 }));
+    if (!foamOk) this.foam.appendChild(s('rect', { x: SX(0.40), y: SY(0.08), width: 0.05 * K, height: 0.08 * K, rx: 3, fill: 'url(#g8-pores)' }));
+    this.foam.appendChild(s('rect', { x: SX(0.40) + 1, y: SY(0.08) + 1, width: 0.05 * K - 2, height: 5, rx: 2, fill: '#FFFFFF', opacity: 0.22 }));
     svg.appendChild(this.foam);
 
-    /* ---- light gate timer ---- */
+    /* ---- light gate timer ----
+       Row 1: 7-segment display and its unit. Row 2: indicator lights
+       (TIME, SPEED, READY). Row 3: Mode and Reset buttons. */
     const tb = s('g', {});
+    const TT = 0.268;                                      // top of the case above the bench / m
     tb.appendChild(s('rect', { x: SX(0.508), y: SY(0.006), width: 12, height: 3, rx: 1, fill: '#1E2126' }));
     tb.appendChild(s('rect', { x: SX(0.788), y: SY(0.006), width: 12, height: 3, rx: 1, fill: '#1E2126' }));
-    tb.appendChild(s('rect', { x: SX(0.505), y: SY(0.19), width: 0.30 * K, height: 0.184 * K, rx: 7, fill: 'url(#g8-case)', stroke: '#6F7A86', 'stroke-width': 1 }));
-    tb.appendChild(s('rect', { x: SX(0.515), y: SY(0.18), width: 0.28 * K, height: 0.162 * K, rx: 4, fill: 'url(#g8-panel)', stroke: '#141920', 'stroke-width': 0.8 }));
+    tb.appendChild(s('rect', { x: SX(0.505), y: SY(TT), width: 0.30 * K, height: (TT - 0.006) * K, rx: 7, fill: 'url(#g8-case)', stroke: '#6F7A86', 'stroke-width': 1 }));
+    tb.appendChild(s('line', { x1: SX(0.505) + 7, y1: SY(TT) + 1, x2: SX(0.805) - 7, y2: SY(TT) + 1, stroke: '#FFFFFF', 'stroke-width': 1.2, opacity: 0.8 }));
+    tb.appendChild(s('rect', { x: SX(0.515), y: SY(TT - 0.010), width: 0.28 * K, height: (TT - 0.026) * K, rx: 4, fill: 'url(#g8-panel)', stroke: '#141920', 'stroke-width': 0.8 }));
+    [[0.521, TT - 0.016], [0.789, TT - 0.016], [0.521, 0.024], [0.789, 0.024]].forEach(q => { tb.appendChild(s('circle', { cx: SX(q[0]), cy: SY(q[1]), r: 1.8, fill: '#8A939D', stroke: '#2A3038', 'stroke-width': 0.4 })); tb.appendChild(s('line', { x1: SX(q[0]) - 1.1, y1: SY(q[1]), x2: SX(q[0]) + 1.1, y2: SY(q[1]), stroke: '#3A4048', 'stroke-width': 0.5 })); });
     tb.appendChild(s('rect', { x: SX(0.498), y: SY(0.112), width: 5, height: 12, rx: 1.5, fill: '#2A2F36' }));     // socket and plug
-    tb.appendChild(s('rect', { x: SX(0.526), y: SY(0.172), width: 0.158 * K, height: 0.067 * K, rx: 2.5, fill: 'url(#g8-window)', stroke: '#06090C', 'stroke-width': 1 }));
-    this.digits = s('g', { role: 'img', 'aria-label': 'Timer display' });
+    const WT = TT - 0.022;                                 // top of the display window
+    this.dispGeo = { x0: SX(0.536), y0: SY(WT - 0.009) };
+    tb.appendChild(s('rect', { x: SX(0.526), y: SY(WT), width: 0.158 * K, height: 0.067 * K, rx: 2.5, fill: 'url(#g8-window)', stroke: '#06090C', 'stroke-width': 1 }));
+    this.digits = s('g', { id: 'timer-digits', role: 'img', 'aria-label': 'Timer display' });
     tb.appendChild(this.digits);
-    tb.appendChild(s('path', { d: 'M' + SX(0.53) + ' ' + SY(0.168) + ' l 30 0 l -12 30 l -18 0 z', fill: '#FFFFFF', opacity: 0.05 }));
-    tb.appendChild(s('text', { x: SX(0.690), y: SY(0.112), 'font-size': 15, 'font-weight': 700, fill: '#E4E7EC', 'font-family': FONT, text: 's' }));
-    tb.appendChild(s('text', { x: SX(0.527), y: SY(0.032), 'font-size': 8.5, 'font-weight': 700, fill: '#AEB6C2', 'font-family': FONT, 'letter-spacing': 0.8, text: 'LIGHT GATE TIMER' }));
-    // READY light: on after Reset, off after a measurement
-    this.readyLed = s('circle', { cx: SX(0.762), cy: SY(0.158), r: 3.6, fill: '#1A221C', stroke: '#06090C', 'stroke-width': 0.8 });
-    tb.appendChild(this.readyLed);
-    tb.appendChild(s('text', { x: SX(0.762), y: SY(0.128), 'text-anchor': 'middle', 'font-size': 8.5, 'font-weight': 700, fill: '#D0D5DD', 'font-family': FONT, text: 'READY' }));
-    // Reset button (keyboard accessible)
-    const rb = s('g', { class: 'svg-btn', tabindex: '0', role: 'button', 'aria-label': 'Reset timer' });
-    rb.appendChild(s('rect', { class: 'svg-focus', x: SX(0.702), y: SY(0.092), width: 0.09 * K, height: 0.064 * K, rx: 6, fill: 'none', stroke: '#1D4ED8', 'stroke-width': 3 }));
-    this.resetFace = s('g', {});
-    this.resetFace.appendChild(s('rect', { x: SX(0.708), y: SY(0.086), width: 0.078 * K, height: 0.052 * K, rx: 4.5, fill: 'url(#g8-btn)', stroke: '#0A0C0F', 'stroke-width': 1 }));
-    this.resetFace.appendChild(s('line', { x1: SX(0.708) + 4, y1: SY(0.086) + 1.6, x2: SX(0.786) - 4, y2: SY(0.086) + 1.6, stroke: '#8A9099', 'stroke-width': 1, opacity: 0.8 }));
-    this.resetFace.appendChild(s('text', { x: SX(0.747), y: SY(0.052), 'text-anchor': 'middle', 'font-size': 13.5, 'font-weight': 700, fill: '#F2F4F7', 'font-family': FONT, text: 'Reset' }));
-    rb.appendChild(this.resetFace);
-    rb.addEventListener('click', () => this.resetTimer());
-    rb.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); this.resetTimer(); } });
-    this.resetBtn = rb;
-    tb.appendChild(rb);
+    tb.appendChild(s('rect', { x: SX(0.526), y: SY(WT), width: 0.158 * K, height: 0.067 * K, rx: 2.5, fill: 'url(#g8-glass)' }));   // glass over the display
+    tb.appendChild(s('rect', { x: SX(0.526) + 1, y: SY(WT) + 1, width: 0.158 * K - 2, height: 3, fill: '#000', opacity: 0.35 }));     // inner shadow
+    this.unitTxt = s('text', { x: SX(0.692), y: SY(WT - 0.060), 'font-size': 15, 'font-weight': 700, fill: '#E4E7EC', 'font-family': FONT, text: 's' });
+    tb.appendChild(this.unitTxt);
+    tb.appendChild(s('text', { x: SX(0.527), y: SY(0.030), 'font-size': 8.5, 'font-weight': 700, fill: '#AEB6C2', 'font-family': FONT, 'letter-spacing': 0.8, text: 'LIGHT GATE TIMER' }));
+    // indicator lights: a lit lamp and white lettering for the active one
+    const lamp = (x, label) => {
+      const led = s('circle', { cx: SX(x), cy: SY(0.160), r: 3.6, fill: '#1A221C', stroke: '#06090C', 'stroke-width': 0.8 });
+      const txt = s('text', { x: SX(x), y: SY(0.131), 'text-anchor': 'middle', 'font-size': 9.5, 'font-weight': 700, fill: '#D0D5DD', 'font-family': FONT, 'letter-spacing': 0.3, text: label });
+      tb.appendChild(led); tb.appendChild(txt);
+      return { led, txt };
+    };
+    const speedOn = CONFIG.timerSpeedMode !== false;
+    if (speedOn) { this.lampTime = lamp(0.547, 'TIME'); this.lampSpeed = lamp(0.617, 'SPEED'); }
+    const ready = lamp(0.745, 'READY');
+    this.readyLed = ready.led;
+    // a push button drawn on the timer (keyboard accessible)
+    const pushBtn = (x, label, id, aria, fn) => {
+      const b = s('g', { class: 'svg-btn', id, tabindex: '0', role: 'button', 'aria-label': aria });
+      b.appendChild(s('rect', { class: 'svg-focus', x: SX(x - 0.006), y: SY(0.118), width: 0.09 * K, height: 0.064 * K, rx: 6, fill: 'none', stroke: '#1D4ED8', 'stroke-width': 3 }));
+      const face = s('g', {});
+      face.appendChild(s('rect', { x: SX(x), y: SY(0.112), width: 0.078 * K, height: 0.052 * K, rx: 4.5, fill: 'url(#g8-btn)', stroke: '#0A0C0F', 'stroke-width': 1 }));
+      face.appendChild(s('line', { x1: SX(x) + 4, y1: SY(0.112) + 1.6, x2: SX(x + 0.078) - 4, y2: SY(0.112) + 1.6, stroke: '#8A9099', 'stroke-width': 1, opacity: 0.8 }));
+      face.appendChild(s('text', { x: SX(x + 0.039), y: SY(0.078), 'text-anchor': 'middle', 'font-size': 13.5, 'font-weight': 700, fill: '#F2F4F7', 'font-family': FONT, text: label }));
+      b.appendChild(face);
+      b.addEventListener('click', fn);
+      b.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } });
+      tb.appendChild(b);
+      return { b, face };
+    };
+    if (speedOn) { const mb = pushBtn(0.536, 'Mode', 'timer-mode', 'Timer mode', () => this.toggleMode()); this.modeBtn = mb.b; this.modeFace = mb.face; }
+    const rb = pushBtn(0.708, 'Reset', 'timer-reset', 'Reset timer', () => this.resetTimer());
+    this.resetBtn = rb.b; this.resetFace = rb.face;
     svg.appendChild(tb);
 
     /* ---- trolley ---- */
     this.trolley = this.drawTrolleyParts();
+    this.trolley.setAttribute('class', 'trolley');
+    this.trolley.style.touchAction = 'none';
+    this.trolley.addEventListener('pointerdown', e => this.dragStart(e));
+    this.trolley.addEventListener('pointermove', e => this.dragMove(e));
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(ev => this.trolley.addEventListener(ev, e => this.dragEnd(e)));
     svg.appendChild(this.trolley);
 
     /* ---- near arm of the light gate (in front of the trolley) ---- */
@@ -1578,8 +1877,10 @@ const Sim = {
     const rw = 0.032 * K;
     this.rule.appendChild(s('ellipse', { cx: rw / 2, cy: SY(0) - 1.5, rx: 26, ry: 3, fill: '#000', opacity: 0.25, filter: 'url(#g8-blur)' }));
     this.rule.appendChild(s('rect', { x: -10, y: SY(0.026), width: rw + 22, height: 0.026 * K, rx: 2, fill: 'url(#g8-block)', stroke: '#5E4122', 'stroke-width': 0.7 }));
-    this.rule.appendChild(s('rect', { x: 0, y: SY(1.0), width: rw, height: 1.0 * K, fill: 'url(#g8-beech)', stroke: '#9C7A3F', 'stroke-width': 0.7 }));
-    for (let j = 0; j < 6; j++) { const y0 = SY(deco()), len = 30 + deco() * 60; this.rule.appendChild(s('line', { x1: 3 + deco() * 10, y1: y0, x2: 3 + deco() * 10, y2: y0 + len, stroke: '#C69B57', 'stroke-width': 0.5, opacity: 0.6 })); }
+    const beechOk = texPattern(defs, 'p8-beech', 'beech', 0, SY(1.0), rw, 1.0 * K);
+    this.rule.appendChild(s('rect', { x: 0, y: SY(1.0), width: rw, height: 1.0 * K, fill: beechOk ? 'url(#p8-beech)' : 'url(#g8-beech)', stroke: '#9C7A3F', 'stroke-width': 0.7 }));
+    if (!beechOk) for (let j = 0; j < 6; j++) { const y0 = SY(deco()), len = 30 + deco() * 60; this.rule.appendChild(s('line', { x1: 3 + deco() * 10, y1: y0, x2: 3 + deco() * 10, y2: y0 + len, stroke: '#C69B57', 'stroke-width': 0.5, opacity: 0.6 })); }
+    this.rule.appendChild(s('rect', { x: rw - 2.2, y: SY(1.0), width: 2.2, height: 1.0 * K, fill: '#000', opacity: 0.12 }));   // the right edge is in shade
     let mm = '', big = '';
     for (let i = 0; i <= 1000; i++) {
       const y = SY(i / 1000).toFixed(2);
@@ -1593,10 +1894,11 @@ const Sim = {
     svg.appendChild(this.rule);
     this.square = s('g', {});
     svg.appendChild(this.square);
-    this.replayTag = s('text', { x: 16, y: 30, 'font-size': 18, 'font-weight': 700, fill: '#101828', 'font-family': FONT, visibility: 'hidden', text: 'Replay' });
+    this.replayTag = s('text', { x: SC.W / 2, y: 30, 'text-anchor': 'middle', 'font-size': 18, 'font-weight': 700, fill: '#101828', 'font-family': FONT, visibility: 'hidden', text: 'Replay' });
     svg.appendChild(this.replayTag);
-    this.pausedTag = s('text', { x: 16, y: 56, 'font-size': 18, 'font-weight': 700, fill: '#101828', 'font-family': FONT, visibility: 'hidden', text: 'Paused' });
+    this.pausedTag = s('text', { x: SC.W / 2, y: 56, 'text-anchor': 'middle', 'font-size': 18, 'font-weight': 700, fill: '#101828', 'font-family': FONT, visibility: 'hidden', text: 'Paused' });
     svg.appendChild(this.pausedTag);
+    svg.appendChild(s('rect', { x: 0, y: 0, width: SC.W, height: SC.H, fill: 'url(#g8-vig)', 'pointer-events': 'none' }));
 
     /* ---- magnifier (HTML overlay) ---- */
     this.mag = h('div', { class: 'magnifier', hidden: true, 'aria-hidden': 'true' });
@@ -1607,22 +1909,37 @@ const Sim = {
     this.sel = h('select', { id: 'sim-point', 'aria-label': 'Release point' }, PHYS.points.map((p, i) => h('option', { value: i }, p)));
     this.sel.value = String(state.sim.selected);
     this.sel.addEventListener('change', () => { state.sim.selected = +this.sel.value; scheduleSave(); this.updateControls(); });
-    this.bMove = h('button', { type: 'button', class: 'btn', onclick: () => this.moveTrolley() }, 'Move trolley');
-    this.bRelease = h('button', { type: 'button', class: 'btn btn-primary', onclick: () => this.release() }, 'Release');
-    this.bPause = h('button', { type: 'button', class: 'btn', 'aria-pressed': 'false', onclick: () => this.togglePause() }, 'Pause');
-    this.bReplay = h('button', { type: 'button', class: 'btn', onclick: () => this.replay() }, 'Replay');
-    this.bSlow = h('button', { type: 'button', class: 'btn', 'aria-pressed': 'false', onclick: () => { this.slow = !this.slow; this.bSlow.setAttribute('aria-pressed', String(this.slow)); this.bSlow.classList.toggle('on', this.slow); } }, 'Slow motion');
-    this.bSound = h('button', { type: 'button', class: 'btn', 'aria-pressed': 'false', onclick: () => this.toggleSound() }, 'Sound');
+    this.bMove = h('button', { type: 'button', class: 'btn', onclick: () => this.moveTrolley() }, btnIcon('move'), h('span', {}, 'Move trolley'));
+    this.bRelease = h('button', { type: 'button', class: 'btn btn-primary', onclick: () => this.release() }, btnIcon('play'), h('span', {}, 'Release'));
+    this.pauseIcon = btnIcon('pause'); this.pauseLabel = h('span', {}, 'Pause');
+    this.bPause = h('button', { type: 'button', class: 'btn', 'aria-pressed': 'false', onclick: () => this.togglePause() }, this.pauseIcon, this.pauseLabel);
+    this.bReplay = h('button', { type: 'button', class: 'btn', onclick: () => this.replay() }, btnIcon('replay'), h('span', {}, 'Replay'));
+    this.bSlow = h('button', { type: 'button', class: 'btn', 'aria-pressed': 'false', onclick: () => { this.slow = !this.slow; this.bSlow.setAttribute('aria-pressed', String(this.slow)); this.bSlow.classList.toggle('on', this.slow); } }, btnIcon('slow'), h('span', {}, 'Slow motion'));
+    this.soundIcon = btnIcon('soundoff');
+    this.bSound = h('button', { type: 'button', class: 'btn', 'aria-pressed': 'false', onclick: () => this.toggleSound() }, this.soundIcon, h('span', {}, 'Sound'));
     this.status = h('span', { class: 'sim-status', role: 'status' });
     this.maxMsg = h('span', { class: 'sim-max', role: 'status' });
     const controls = h('div', { class: 'sim-controls' },
       h('label', { class: 'sim-sel', for: 'sim-point' }, 'Release point'), this.sel,
       this.bMove, this.bRelease, this.bPause, this.bReplay, this.bSlow, this.bSound);
     const statusRow = h('div', { class: 'sim-statusrow' }, this.status, this.maxMsg);
-    const sceneWrap = h('div', { class: 'scene-wrap' }, svg, this.mag);
+    /* ---- GPE readout: GPE = mgh for the trolley's height above the bench (g = PHYS.g) ---- */
+    this.gpeVal = h('span', { class: 'gpe-v' }, '0.00 J');
+    this.gpeBox = h('div', { class: 'gpe-box', role: 'group', 'aria-label': 'Gravitational potential energy of the trolley' },
+      h('div', { class: 'gpe-t' }, 'Gravitational potential energy'),
+      h('div', { class: 'gpe-row' }, h('span', { class: 'gpe-k' }, 'GPE ='), this.gpeVal),
+      h('div', { class: 'gpe-s' }, 'm = ' + PHYS.m.toFixed(3) + ' kg,  g = ' + PHYS.g + ' N/kg'));
+    /* ---- Raise and Lower: put the set-square edge exactly on a millimetre mark ---- */
+    this.bRaise = h('button', { type: 'button', class: 'btn btn-sm', id: 'adj-raise', 'aria-label': 'Raise the trolley to the next millimetre mark', onclick: () => this.nudge(1) }, btnIcon('up'), h('span', {}, 'Raise'));
+    this.bLower = h('button', { type: 'button', class: 'btn btn-sm', id: 'adj-lower', 'aria-label': 'Lower the trolley to the next millimetre mark', onclick: () => this.nudge(-1) }, btnIcon('down'), h('span', {}, 'Lower'));
+    this.adjBox = h('div', { class: 'adjust-box', role: 'group', 'aria-label': 'Adjust the height of the trolley', hidden: true },
+      h('div', { class: 'adj-t' }, 'Adjust height'), h('div', { class: 'adj-row' }, this.bRaise, this.bLower));
+    this.magCol = h('div', { class: 'mag-col' }, this.mag, this.adjBox);
+    const sceneWrap = h('div', { class: 'scene-wrap' }, svg, this.magCol, this.gpeBox);
     this.root = h('div', { class: 'sim' }, sceneWrap, controls, statusRow);
 
     /* ---- initial positions ---- */
+    this.renderMode();
     this.setDisplay(state.sim.display || '0.000');
     this.setReady(state.sim.ready);
     this.foamSquash(0);
@@ -1658,38 +1975,64 @@ const Sim = {
     g.appendChild(s('path', { d: 'M' + (x0 + 0.5) + ' ' + (-0.036 * K) + ' a 2.5 2.5 0 1 0 0 5', stroke: '#8D959E', 'stroke-width': 1, fill: 'none' }));   // hook at the back
     // card in two clips on the top
     g.appendChild(s('rect', { x: 0.025 * K, y: -0.110 * K, width: 0.10 * K, height: 0.05 * K, fill: 'url(#g8-card)', stroke: '#000', 'stroke-width': 0.6 }));
+    g.appendChild(s('path', { d: 'M' + (0.025 * K + 1) + ' ' + (-0.110 * K + 1) + ' h ' + (0.10 * K - 2) + ' l -26 23 h -' + (0.10 * K - 28) + ' z', fill: 'url(#g8-cardgloss)' }));
     g.appendChild(s('line', { x1: 0.025 * K + 1, y1: -0.110 * K + 1, x2: 0.125 * K - 1, y2: -0.110 * K + 1, stroke: '#5A5A5A', 'stroke-width': 0.7 }));
     [0.028, 0.112].forEach(x => g.appendChild(s('rect', { x: x * K, y: -0.068 * K, width: 0.011 * K, height: 0.011 * K, rx: 1, fill: '#2A2D31', stroke: '#000', 'stroke-width': 0.4 })));
-    // wheels: tyre, metal rim, five holes (so you can see them turn)
+    // gloss on the moulded body (light from the upper left)
+    g.appendChild(s('path', { d: 'M' + (x0 + 3) + ' ' + (yT + 2) + ' H' + (x1 - 6) + ' q 2 0 2 2 V' + (yT + 6) + ' H' + (x0 + 2) + ' V' + (yT + 3) + ' z', fill: 'url(#g8-gloss)', opacity: 0.7 }));
+    // wheels: tyre with tread, metal rim, five holes (so you can see them turn); they blur when fast
     this.wheels = [0, 0.12].map(wx => {
       const cx = wx * K, cy = -TROLLEY.wheelR * K, R = TROLLEY.wheelR * K;
       const wg = s('g', {});
-      wg.appendChild(s('circle', { cx, cy, r: R, fill: 'url(#g8-tyre)' }));
-      wg.appendChild(s('circle', { cx, cy, r: R * 0.64, fill: 'url(#g8-rim)', stroke: '#59616A', 'stroke-width': 0.5 }));
+      wg.appendChild(s('ellipse', { cx, cy: 0.6, rx: 7, ry: 1.4, fill: '#000', opacity: 0.55, filter: 'url(#g8-soft)' }));   // contact shadow
+      wg.appendChild(s('circle', { cx, cy, r: R, fill: 'url(#g8-sidewall)' }));
       const spin = s('g', {});
-      for (let j = 0; j < 5; j++) { const a = j * 2 * Math.PI / 5; spin.appendChild(s('circle', { cx: cx + Math.cos(a) * R * 0.42, cy: cy + Math.sin(a) * R * 0.42, r: 1.05, fill: '#4A525B' })); }
-      spin.appendChild(s('rect', { x: cx + R * 0.7, y: cy - 0.6, width: R * 0.22, height: 1.2, fill: '#3A3A3A' }));   // tread mark on the tyre
-      spin.appendChild(s('circle', { cx, cy, r: 1.6, fill: '#2E343B' }));
+      spin.appendChild(s('circle', { cx, cy, r: R - 0.7, fill: 'none', stroke: '#2B2B2B', 'stroke-width': 1.3, 'stroke-dasharray': '1.1 1.5' }));   // tread
       wg.appendChild(spin);
+      wg.appendChild(s('circle', { cx, cy, r: R * 0.64, fill: 'url(#g8-rim)', stroke: '#59616A', 'stroke-width': 0.5 }));
+      const holes = s('g', {});
+      for (let j = 0; j < 5; j++) { const a = j * 2 * Math.PI / 5; holes.appendChild(s('circle', { cx: cx + Math.cos(a) * R * 0.42, cy: cy + Math.sin(a) * R * 0.42, r: 1.05, fill: '#4A525B' })); }
+      holes.appendChild(s('circle', { cx, cy, r: 1.6, fill: '#2E343B' }));
+      wg.appendChild(holes);
+      const blur = s('circle', { cx, cy, r: R * 0.42, fill: 'none', stroke: '#5A626B', 'stroke-width': 2.4, opacity: 0 });   // motion blur of the holes
+      wg.appendChild(blur);
+      wg.appendChild(s('path', { d: 'M ' + (cx - R * 0.5) + ' ' + (cy - R * 0.25) + ' A ' + (R * 0.56) + ' ' + (R * 0.56) + ' 0 0 1 ' + (cx + R * 0.1) + ' ' + (cy - R * 0.56), stroke: '#FFFFFF', 'stroke-width': 1, fill: 'none', opacity: 0.7, 'stroke-linecap': 'round' }));   // highlight on the rim
       g.appendChild(wg);
-      return { spin, cx, cy };
+      return { spin, holes, blur, cx, cy };
     });
     return g;
   },
 
+  /* GPE = m g h, with h the height of the base of the front wheel above the
+     bench (the same h students read from the rule). It updates as the
+     trolley moves, and is 0 J on the bench. */
+  showGPE(hgt) {
+    if (!this.gpeVal) return;
+    const e = PHYS.m * PHYS.g * Math.max(0, hgt);
+    const txt = (e < 0.0005 ? '0.00' : e >= 1 ? e.toFixed(2) : e.toFixed(3)) + ' J';
+    if (txt !== this.gpeTxt) { this.gpeTxt = txt; this.gpeVal.textContent = txt; }
+  },
   drawTrolley(uf) {
     this.uf = uf;
     const F = this.P(uf), R = this.P(uf - TROLLEY.wheelbase);
+    this.showGPE(F.y);
     const ang = -Math.atan2(F.y - R.y, F.x - R.x) * 180 / Math.PI;
     this.trolley.setAttribute('transform', 'translate(' + SX(R.x).toFixed(2) + ' ' + SY(R.y).toFixed(2) + ') rotate(' + ang.toFixed(3) + ')');
     const rot = (uf / TROLLEY.wheelR) * 180 / Math.PI;      // rolling without slipping
-    this.wheels.forEach(w => w.spin.setAttribute('transform', 'rotate(' + rot.toFixed(1) + ' ' + w.cx + ' ' + w.cy + ')'));
+    this.wheels.forEach(w => { const tr = 'rotate(' + rot.toFixed(1) + ' ' + w.cx + ' ' + w.cy + ')'; w.spin.setAttribute('transform', tr); w.holes.setAttribute('transform', tr); });
     // light gate LED: lit while the card blocks the beam
     const blocked = uf > 0 && uf + TROLLEY.cardFwd >= PHYS.gateDist && uf - TROLLEY.cardBack <= PHYS.gateDist;
     if (blocked !== this.ledOn) { this.ledOn = blocked; this.led.setAttribute('fill', blocked ? '#FF4A3D' : '#4A1712'); this.led.setAttribute('filter', blocked ? 'url(#g8-glow)' : ''); }
     // the foam squashes when the plunger presses into it
     const sq = Math.max(0, uf + TROLLEY.nose - PHYS.cushionDist);
     if (Math.abs(sq - (this.sq || 0)) > 1e-5) this.foamSquash(sq);
+  },
+  /* At speed the wheel holes smear into a ring, as on a camera. */
+  wheelBlur(speed) {
+    const b = clamp((speed - 0.35) / 1.2, 0, 1);
+    if (Math.abs(b - (this.blurLevel || 0)) < 0.02) return;
+    this.blurLevel = b;
+    this.wheels.forEach(w => { w.holes.setAttribute('opacity', (1 - 0.85 * b).toFixed(2)); w.blur.setAttribute('opacity', (0.75 * b).toFixed(2)); });
   },
   foamSquash(sq) {
     this.sq = sq;
@@ -1714,9 +2057,67 @@ const Sim = {
     this.square.appendChild(s('line', { x1: x0, y1: y, x2: x1, y2: y, stroke: '#0B1B3F', 'stroke-width': 1.3 }));
     this.square.style.visibility = 'visible';
     this.drawMagnifier(hgt);
-    this.mag.hidden = false;
+    this.mag.hidden = false; this.adjBox.hidden = false;
   },
-  hideMeasure() { this.square.style.visibility = 'hidden'; this.mag.hidden = true; },
+  hideMeasure() { this.square.style.visibility = 'hidden'; this.mag.hidden = true; this.adjBox.hidden = true; },
+
+  /* ---- Fine adjustment of the placement ----
+     The hand placement after Move trolley is a little off the mark (placeOffset).
+     Raise and Lower, or dragging the trolley along the ramp, move the front
+     wheel so that its height h = (d + dd) sin(theta) is a whole number of
+     millimetres: the set-square edge then sits exactly on a mark of the rule,
+     and the run uses exactly that h. The wheel stays within PHYS.adjustMax
+     (along the ramp) of the release mark. */
+  adjRange(i) {
+    const rel = releaseDistance(i), sn = params.sinT;
+    return [Math.ceil((rel - PHYS.adjustMax) * sn * 1000 - 1e-9), Math.floor((rel + PHYS.adjustMax) * sn * 1000 + 1e-9)];
+  },
+  canAdjust() { return state.sim.positioned && !!state.sim.place && !this.anim && !isSubmitted(); },
+  /* Move the trolley so that h is exactly mm millimetres (kept in range). */
+  setPlacedMm(mm) {
+    const pl = state.sim.place, r = this.adjRange(pl.idx);
+    mm = clamp(Math.round(mm), r[0], r[1]);
+    const dd = mm / 1000 / params.sinT - releaseDistance(pl.idx);
+    if (Math.abs(dd - pl.dd) < 1e-9) return false;
+    pl.dd = dd; pl.adj = true;
+    state.sim.uFront = this.placeU(pl.idx, dd);
+    this.drawTrolley(state.sim.uFront);
+    this.showMeasure();
+    Sfx.burst(0.05, 1500, 0.02, 'highpass');
+    scheduleSave(); this.updateControls();
+    return true;
+  },
+  /* Raise (+1) or Lower (-1): to the next whole millimetre above or below. */
+  nudge(dir) {
+    if (!this.canAdjust()) return;
+    const hm = this.placedHeight() * 1000;
+    this.setPlacedMm(dir > 0 ? Math.floor(hm + 1e-6) + 1 : Math.ceil(hm - 1e-6) - 1);
+  },
+  svgPoint(e) {
+    const m = this.svg.getScreenCTM(); if (!m) return { x: 0, y: 0 };
+    const p = this.svg.createSVGPoint(); p.x = e.clientX; p.y = e.clientY;
+    return p.matrixTransform(m.inverse());
+  },
+  /* Drag the trolley along the ramp with a mouse, pen or finger. */
+  dragStart(e) {
+    if (!this.canAdjust() || (e.button !== undefined && e.button > 0)) return;
+    e.preventDefault();
+    const pt = this.svgPoint(e);
+    this.drag = { id: e.pointerId, x: pt.x, y: pt.y, d0: releaseDistance(state.sim.place.idx) + state.sim.place.dd };
+    try { this.trolley.setPointerCapture(e.pointerId); } catch (err) { /* not supported */ }
+    this.trolley.classList.add('dragging');
+  },
+  dragMove(e) {
+    const dg = this.drag; if (!dg || e.pointerId !== dg.id || !this.canAdjust()) return;
+    const pt = this.svgPoint(e), c = this.cos(), sn = params.sinT;
+    const along = ((pt.x - dg.x) * -c + (pt.y - dg.y) * -sn) / SC.k;   // m up the ramp
+    this.setPlacedMm((dg.d0 + along) * sn * 1000);
+  },
+  dragEnd(e) {
+    if (!this.drag || (e && e.pointerId !== this.drag.id)) return;
+    this.drag = null; this.trolley.classList.remove('dragging');
+    try { this.trolley.releasePointerCapture(e.pointerId); } catch (err) { /* already released */ }
+  },
   /* Close-up of the rule where the set-square edge meets it (1 unit = 1 mm).
      It never shows the height as text: only the rule's own cm numbers. */
   drawMagnifier(hgt) {
@@ -1751,24 +2152,66 @@ const Sim = {
     g.appendChild(s('circle', { cx: -1, cy: 0, r: 14.4, fill: 'none', stroke: 'url(#m8-rim)', 'stroke-width': 1.3 }));
     g.appendChild(s('circle', { cx: -1, cy: 0, r: 13.7, fill: 'none', stroke: '#000', 'stroke-width': 0.25, opacity: 0.35 }));
   },
-  setDisplay(str) {
-    this.shown = str;
+  /* The timer keeps one reading: the time the card blocked the beam
+     (state.sim.display, to 0.001 s). TIME mode shows it in s. SPEED mode
+     shows v = 0.100 m / t in m/s (speedReading). While the card is still in
+     the beam, TIME counts up and SPEED waits at 0.00. */
+  setDisplay(timeStr, counting) {
+    this.timeStr = timeStr;
+    const speed = state.sim.mode === 'speed';
+    const txt = speed ? (counting ? '0.00' : speedReading(timeStr)) : timeStr;
+    this.shown = txt;
+    this.drawDigits(txt);
+    this.unitTxt.textContent = speed ? 'm/s' : 's';
+    this.digits.setAttribute('aria-label', 'Timer display ' + txt + (speed ? ' metres per second' : ' seconds'));
+  },
+  /* Four 7-segment digits, right-aligned, with the decimal point lit after
+     the right digit. Unused digits stay dark, as on a real display. */
+  drawDigits(txt) {
     const g = this.digits; while (g.firstChild) g.removeChild(g.firstChild);
-    const chars = String(str).replace('.', '').split('');
-    const K = SC.k, x0 = SX(0.536), y0 = SY(0.163), sc = 0.86;
+    const cells = [];
+    String(txt).split('').forEach(ch => { if (ch === '.') { if (cells.length) cells[cells.length - 1].dot = true; } else cells.push({ ch, dot: false }); });
+    while (cells.length < 4) cells.unshift({ ch: ' ', dot: false });
+    const K = SC.k, x0 = this.dispGeo.x0, y0 = this.dispGeo.y0, sc = 0.86;
     const lit = s('g', { filter: 'url(#g8-glow)' }), dim = s('g', {});
-    chars.forEach((ch, i) => {
+    cells.forEach((c, i) => {
       const tr = 'translate(' + (x0 + i * 0.038 * K).toFixed(2) + ' ' + y0.toFixed(2) + ') scale(' + sc + ') skewX(-7)';
       const dl = s('g', { transform: tr }), dd = s('g', { transform: tr });
       Object.keys(SEG).forEach(sg => {
-        const on = (DIGITS[ch] || '').indexOf(sg) >= 0, r = SEG[sg];
+        const on = (DIGITS[c.ch] || '').indexOf(sg) >= 0, r = SEG[sg];
         (on ? dl : dd).appendChild(s('rect', { x: r[0], y: r[1], width: r[2], height: r[3], rx: 1.3, fill: on ? '#FF3B2C' : '#2E0F0B' }));
       });
       lit.appendChild(dl); dim.appendChild(dd);
-      if (i === 0) lit.appendChild(s('circle', { cx: x0 + 0.0315 * K, cy: y0 + 25.2 * sc, r: 1.7, fill: '#FF3B2C' }));
+      const dot = s('circle', { cx: x0 + i * 0.038 * K + 0.0315 * K, cy: y0 + 25.2 * sc, r: 1.7, fill: c.dot ? '#FF3B2C' : '#2E0F0B' });
+      (c.dot ? lit : dim).appendChild(dot);
     });
     g.appendChild(dim); g.appendChild(lit);
-    g.setAttribute('aria-label', 'Timer display ' + str + ' s');
+  },
+  /* TIME and SPEED lamps, and the Mode button's accessible name. */
+  renderMode() {
+    if (!this.lampTime) return;
+    const speed = state.sim.mode === 'speed';
+    [[this.lampTime, !speed], [this.lampSpeed, speed]].forEach(([lp, on]) => {
+      lp.led.setAttribute('fill', on ? '#FFB224' : '#2A2412');
+      lp.led.setAttribute('filter', on ? 'url(#g8-glow)' : '');
+      lp.txt.setAttribute('fill', on ? '#FFFFFF' : '#7C8694');
+    });
+    this.modeBtn.setAttribute('aria-label', 'Timer mode. Now showing ' + (speed ? 'speed in metres per second' : 'time in seconds') + '. Press to show ' + (speed ? 'time' : 'speed') + '.');
+  },
+  pressFace(face) {
+    face.setAttribute('transform', 'translate(0 1.2)');
+    setTimeout(() => face.removeAttribute('transform'), 120);
+  },
+  /* Mode changes what the timer shows, not what it measured. */
+  toggleMode() {
+    if (isSubmitted() || !this.modeBtn) return;
+    if (this.anim && this.anim.measure && !this.anim.done) return;   // ignored while the card is being timed
+    this.pressFace(this.modeFace);
+    Sfx.burst(0.06, 2600, 0.025, 'highpass');
+    state.sim.mode = state.sim.mode === 'speed' ? 'time' : 'speed';
+    this.renderMode();
+    this.setDisplay(this.timeStr || state.sim.display || '0.000');
+    scheduleSave();
   },
   setReady(on) {
     this.readyLed.setAttribute('fill', on ? '#3BE36A' : '#1A221C');
@@ -1778,8 +2221,7 @@ const Sim = {
     if (isSubmitted()) return;
     if (this.anim && this.anim.measure && !this.anim.done) return;   // ignored while the card is being timed
     if (this.anim) this.anim.resetDuring = true;
-    this.resetFace.setAttribute('transform', 'translate(0 1.2)');
-    setTimeout(() => this.resetFace.removeAttribute('transform'), 120);
+    this.pressFace(this.resetFace);
     Sfx.burst(0.08, 2400, 0.03, 'highpass');
     this.setDisplay('0.000'); state.sim.display = '0.000';
     state.sim.ready = true; this.setReady(true);
@@ -1788,6 +2230,7 @@ const Sim = {
   toggleSound() {
     const on = Sfx.setOn(!Sfx.on);
     this.bSound.setAttribute('aria-pressed', String(on)); this.bSound.classList.toggle('on', on);
+    const ni = btnIcon(on ? 'sound' : 'soundoff'); this.bSound.replaceChild(ni, this.soundIcon); this.soundIcon = ni;
   },
 
   updateControls() {
@@ -1802,9 +2245,19 @@ const Sim = {
     this.bRelease.disabled = busy || ro || !state.sim.positioned || max;
     const animRun = this.anim && this.anim.type !== 'move';
     this.bPause.disabled = !animRun;
-    this.bPause.textContent = this.paused ? 'Resume' : 'Pause';
+    this.pauseLabel.textContent = this.paused ? 'Resume' : 'Pause';
+    const want = this.paused ? 'play' : 'pause';
+    if (this.pauseIcon.dataset.icon !== want) { const ni = btnIcon(want); this.bPause.replaceChild(ni, this.pauseIcon); this.pauseIcon = ni; }
     this.bPause.setAttribute('aria-pressed', String(this.paused));
     this.bReplay.disabled = busy || ro || !state.sim.lastRun || state.sim.positioned;
+    const canAdj = this.canAdjust();
+    const hm = canAdj ? this.placedHeight() * 1000 : 0, rg = canAdj ? this.adjRange(state.sim.place.idx) : [0, 0];
+    const raiseWasFocused = document.activeElement === this.bRaise, lowerWasFocused = document.activeElement === this.bLower;
+    this.bRaise.disabled = !canAdj || hm >= rg[1] - 1e-6;
+    this.bLower.disabled = !canAdj || hm <= rg[0] + 1e-6;
+    if (raiseWasFocused && this.bRaise.disabled && !this.bLower.disabled) this.bLower.focus();
+    if (lowerWasFocused && this.bLower.disabled && !this.bRaise.disabled) this.bRaise.focus();
+    this.trolley.classList.toggle('can-drag', canAdj);
     this.status.textContent = 'Runs at ' + PHYS.points[i] + ': ' + n + ' of ' + CONFIG.maxRunsPerPoint;
     this.maxMsg.textContent = max ? MAX_RUNS : '';
   },
@@ -1841,8 +2294,8 @@ const Sim = {
     const run = makeRun(params, i, n, pl.dd);
     const entry = {
       n, ts: nowIso(), point: run.point, idx: i, runAtPoint: this.runsAt(i) + 1,
-      q: pl.q, dd: round(pl.dd, 5), h: round(run.h, 5), eps: run.eps === null ? null : round(run.eps, 5), anomaly: run.anomaly,
-      t: run.t, display: run.t.toFixed(3), session: currentSession()
+      q: pl.q, dd: round(pl.dd, 5), adj: !!pl.adj, h: round(run.h, 5), eps: run.eps === null ? null : round(run.eps, 5), anomaly: run.anomaly,
+      t: run.t, display: run.t.toFixed(3), mode: state.sim.mode, session: currentSession()
     };
     state.runLog.push(entry);
     state.sim.lastRun = n; state.sim.display = entry.display; state.sim.ready = false;
@@ -1870,7 +2323,7 @@ const Sim = {
     if (!this.anim || this.anim.type === 'move') return;
     this.paused = !this.paused;
     this.pausedTag.setAttribute('visibility', this.paused ? 'visible' : 'hidden');
-    if (this.paused) Sfx.rolling(0);
+    if (this.paused) { Sfx.rolling(0); this.wheelBlur(0); }
     this.updateControls();
   },
   startLoop() {
@@ -1904,7 +2357,7 @@ const Sim = {
     const u = positionAt(a.kin, a.simT);
     this.drawTrolley(u);
     // sound: rolling, a knock as each wheel crosses the joint, the thud into the foam
-    if (dt > 0) Sfx.rolling(Math.abs(u - u0) / dt);
+    if (dt > 0) { const sp = Math.abs(u - u0) / dt; Sfx.rolling(sp); this.wheelBlur(sp); }
     if (u0 < 0 && u >= 0) Sfx.burst(0.25, 700, 0.05);
     if (u0 < TROLLEY.wheelbase && u >= TROLLEY.wheelbase) Sfx.burst(0.2, 650, 0.05);
     if (!a.hitFoam && a.kin.contact && u >= a.kin.uc) { a.hitFoam = true; Sfx.thud(Math.min(1, (a.kin.vc || 1) / 2.6)); }
@@ -1912,13 +2365,13 @@ const Sim = {
     if (a.measure && !a.shown) {
       const into = u + TROLLEY.cardFwd - PHYS.gateDist;
       if (into >= PHYS.L) { a.shown = true; a.done = true; this.setDisplay(a.display); }
-      else if (into >= 0) this.setDisplay((Number(a.display) * into / PHYS.L).toFixed(3));
+      else if (into >= 0) this.setDisplay((Number(a.display) * into / PHYS.L).toFixed(3), true);
     }
     if (a.simT >= a.kin.total) {
       if (a.measure && !a.shown) this.setDisplay(a.display);
       if (a.type === 'replay' && !a.resetDuring) { state.sim.display = a.display; state.sim.ready = false; }
       this.anim = null; this.paused = false;
-      Sfx.rolling(0);
+      Sfx.rolling(0); this.wheelBlur(0);
       this.replayTag.setAttribute('visibility', 'hidden'); this.pausedTag.setAttribute('visibility', 'hidden');
       this.setReady(state.sim.ready);
       state.sim.uFront = this.uf;
@@ -1962,13 +2415,13 @@ const App = {
       const cl = h('select', { id: 'f-class' }, h('option', { value: '' }, 'Choose'), CONFIG.classList.map(c => h('option', { value: c }, c)));
       const err = h('p', { class: 'dlg-err', role: 'alert', hidden: true });
       const form = h('form', { class: 'fields', novalidate: true },
-        h('div', { class: 'frow' }, h('label', { for: 'f-first' }, 'First name'), fn),
+        h('div', { class: 'frow' }, h('label', { for: 'f-first' }, 'Preferred name'), fn),
         h('div', { class: 'frow' }, h('label', { for: 'f-last' }, 'Last name'), ln),
         h('div', { class: 'frow' }, h('label', { for: 'f-class' }, 'Class'), cl),
         err, h('button', { type: 'submit', class: 'btn btn-primary btn-lg' }, 'Start'));
       form.addEventListener('submit', e => {
         e.preventDefault();
-        if (!fn.value.trim() || !ln.value.trim() || !cl.value) { err.textContent = 'Enter your first name, last name and class.'; err.hidden = false; return; }
+        if (!fn.value.trim() || !ln.value.trim() || !cl.value) { err.textContent = 'Enter your preferred name, last name and class.'; err.hidden = false; return; }
         const sd = seedFor(fn.value, ln.value, cl.value);
         const existing = loadSaved(sd.code);
         setCurrentState(existing || newState(fn.value, ln.value, cl.value));
@@ -2026,7 +2479,7 @@ function expectedPanel(first, last, cls, runLog) {
     h('ul', { class: 'ex-list' },
       h('li', {}, 'sin θ = ' + p.sinT.toFixed(4) + ', θ = ' + (Math.asin(p.sinT) * 180 / Math.PI).toFixed(1) + '°'),
       h('li', {}, 'Energy fraction kept k = ' + p.k.toFixed(3)),
-      h('li', {}, 'Expected gradient 20k = ' + ex.gradient.toFixed(2) + ' m/s² (hypothesis: 20 m/s²)'),
+      h('li', {}, 'Expected gradient 2gk = ' + ex.gradient.toFixed(2) + ' m/s² (hypothesis: 2g = ' + (2 * PHYS.g).toFixed(1) + ' m/s²)'),
       h('li', {}, 'Anomalous run: ' + anomaly + ' Anomaly factor f = ' + p.f.toFixed(3) + ' (' + Math.round((1 - p.f) * 100) + '% slow)')),
     h('div', { class: 'tscroll' }, h('table', { class: 'info-table num-table' },
       h('thead', {}, h('tr', {}, ['Point', 'd / m', 'h / m', 'h / cm', 'Predicted v / m s⁻¹', 'Model v / m s⁻¹', 'Timer reading / s', 'Predicted v² / m² s⁻²', 'Model v² / m² s⁻²', 'GPE / J', 'Dissipated mgh(1 − k) / J'].map(x => h('th', { scope: 'col' }, x)))),
@@ -2052,15 +2505,30 @@ function runSummary(rec) {
       h('td', {}, normal.length ? (normal.reduce((a, b) => a + b, 0) / normal.length).toFixed(4) : '–'),
       h('td', {}, timerReading(modelSpeed(hgt, p.k)).toFixed(3)));
   });
-  return h('div', { class: 'tscroll' }, h('table', { class: 'info-table num-table' },
+  // line of best fit through this student's own means (anomaly left out), as a check on Part 6(b)
+  const pts = PHYS.points.filter(pt => by[pt]).map(pt => { const ok = by[pt].filter(r => !r.anomaly); if (!ok.length) return null;
+    const hm = ok.reduce((a, r) => a + Number(r.h), 0) / ok.length, tm = ok.reduce((a, r) => a + r.t, 0) / ok.length; return { x: hm, y: Math.pow(PHYS.L / tm, 2) }; }).filter(Boolean);
+  let fitTxt = 'At least two release points are needed for a line of best fit.';
+  if (pts.length >= 2) {
+    const n = pts.length, mx = pts.reduce((a, q) => a + q.x, 0) / n, my = pts.reduce((a, q) => a + q.y, 0) / n;
+    let sxy = 0, sxx = 0; pts.forEach(q => { sxy += (q.x - mx) * (q.y - my); sxx += (q.x - mx) * (q.x - mx); });
+    const m = sxy / sxx, c = my - m * mx;
+    fitTxt = 'Least-squares line through this student\'s mean v² values (anomaly left out): gradient ' + m.toFixed(1) + ' m/s², intercept ' + c.toFixed(2) + ' m²/s². A hand-drawn line of best fit will give a value close to this.';
+  }
+  const nSpeed = rec.runLog.filter(l => l.mode === 'speed').length;
+  if (nSpeed) fitTxt += ' The timer was in SPEED mode at release for ' + nSpeed + ' of ' + rec.runLog.length + ' runs.';
+  const nAdj = rec.runLog.filter(l => l.adj).length;
+  if (nAdj) fitTxt += ' The student adjusted the height to a millimetre mark before ' + nAdj + ' of ' + rec.runLog.length + ' runs.';
+  return h('div', {}, h('div', { class: 'tscroll' }, h('table', { class: 'info-table num-table' },
     h('thead', {}, h('tr', {}, ['Point', 'h of the placements / m', 'Timer readings in run order / s', 'Mean without anomaly / s', 'Model reading at the mark / s'].map(x => h('th', { scope: 'col' }, x)))),
-    h('tbody', {}, rows)));
+    h('tbody', {}, rows))), h('p', { class: 'fit-note' }, fitTxt));
 }
 function runLogTable(runLog) {
   return h('div', { class: 'tscroll' }, h('table', { class: 'info-table num-table' },
-    h('thead', {}, h('tr', {}, ['Run', 'Time stamp', 'Point', 'Run at point', 'True h / m', 'ε', 'Anomaly', 'Timer / s'].map(x => h('th', { scope: 'col' }, x)))),
+    h('thead', {}, h('tr', {}, ['Run', 'Time stamp', 'Point', 'Run at point', 'True h / m', 'ε', 'Anomaly', 'Timer / s', 'Speed reading / m/s', 'Mode at release', 'Height adjusted'].map(x => h('th', { scope: 'col' }, x)))),
     h('tbody', {}, runLog.map(l => h('tr', { class: l.anomaly ? 'anom' : '' }, h('td', {}, String(l.n)), h('td', {}, fmtTime(l.ts)), h('td', {}, l.point), h('td', {}, String(l.runAtPoint)),
-      h('td', {}, Number(l.h).toFixed(4)), h('td', {}, l.eps === null ? '–' : Number(l.eps).toFixed(4)), h('td', {}, l.anomaly ? 'Yes' : ''), h('td', {}, l.display))))));
+      h('td', {}, Number(l.h).toFixed(4)), h('td', {}, l.eps === null ? '–' : Number(l.eps).toFixed(4)), h('td', {}, l.anomaly ? 'Yes' : ''), h('td', {}, l.display),
+      h('td', {}, speedReading(l.display)), h('td', {}, l.mode === 'speed' ? 'Speed' : 'Time'), h('td', {}, l.adj ? 'Yes' : ''))))));
 }
 
 const Teacher = {
@@ -2154,8 +2622,8 @@ const Teacher = {
   },
   csv() {
     const esc = v => { const s0 = String(v === undefined || v === null ? '' : v); return /[",\n]/.test(s0) ? '"' + s0.replace(/"/g, '""') + '"' : s0; };
-    const lines = [['Name', 'Class', 'Seed code', 'Run', 'Time stamp', 'Point', 'Run at point', 'True h / m', 'Epsilon', 'Anomaly', 'Timer / s'].join(',')];
-    this.sorted().forEach(r => r.runLog.forEach(l => lines.push([r.student.first + ' ' + r.student.last, r.student.cls, r.seedCode, l.n, l.ts, l.point, l.runAtPoint, Number(l.h).toFixed(4), l.eps === null ? '' : Number(l.eps).toFixed(4), l.anomaly ? 'yes' : '', l.display].map(esc).join(','))));
+    const lines = [['Name', 'Class', 'Seed code', 'Run', 'Time stamp', 'Point', 'Run at point', 'True h / m', 'Epsilon', 'Anomaly', 'Timer / s', 'Speed reading / m/s', 'Mode at release', 'Height adjusted'].join(',')];
+    this.sorted().forEach(r => r.runLog.forEach(l => lines.push([r.student.first + ' ' + r.student.last, r.student.cls, r.seedCode, l.n, l.ts, l.point, l.runAtPoint, Number(l.h).toFixed(4), l.eps === null ? '' : Number(l.eps).toFixed(4), l.anomaly ? 'yes' : '', l.display, speedReading(l.display), l.mode === 'speed' ? 'speed' : 'time', l.adj ? 'yes' : ''].map(esc).join(','))));
     return lines.join('\r\n') + '\r\n';
   },
   renderExpected(main) {
@@ -2163,7 +2631,7 @@ const Teacher = {
     const fn = h('input', fieldAttrs({ type: 'text', id: 'p-first' })), ln = h('input', fieldAttrs({ type: 'text', id: 'p-last' }));
     const cl = h('select', { id: 'p-class' }, CONFIG.classList.map(c => h('option', { value: c }, c)));
     const out = h('div', {});
-    const form = h('form', { class: 't-form' }, h('label', { for: 'p-first' }, 'First name'), fn, h('label', { for: 'p-last' }, 'Last name'), ln, h('label', { for: 'p-class' }, 'Class'), cl, h('button', { type: 'submit', class: 'btn btn-primary btn-sm' }, 'Show'));
+    const form = h('form', { class: 't-form' }, h('label', { for: 'p-first' }, 'Preferred name'), fn, h('label', { for: 'p-last' }, 'Last name'), ln, h('label', { for: 'p-class' }, 'Class'), cl, h('button', { type: 'submit', class: 'btn btn-primary btn-sm' }, 'Show'));
     form.addEventListener('submit', e => { e.preventDefault(); out.innerHTML = ''; if (!fn.value.trim() || !ln.value.trim()) return; out.appendChild(expectedPanel(tidyName(fn.value), tidyName(ln.value), cl.value, null)); });
     main.appendChild(form); main.appendChild(out);
   },
@@ -2212,8 +2680,8 @@ function boot() {
   route();
 }
 /* Hooks used by the automated acceptance tests. */
-window.G8U2 = { CONFIG, PHYS, seedFor, paramsFromSeed, makeRun, placeOffset, timerReading, modelSpeed, trueHeight, expectedValues, runKinematics,
-  secretHash, Store, Sim, App, Teacher, Calc, buildRunRecord, readRunRecord, getState: () => state, getParams: () => params };
+window.G8U2 = { CONFIG, PHYS, seedFor, paramsFromSeed, makeRun, placeOffset, pointFactor, timerReading, speedReading, modelSpeed, trueHeight, expectedValues, runKinematics,
+  secretHash, encodeRuns, decodeRuns, Store, Sim, App, Teacher, Calc, buildRunRecord, readRunRecord, getState: () => state, getParams: () => params };
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', boot); else boot();
 
 </script>
